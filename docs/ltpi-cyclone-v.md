@@ -218,4 +218,4 @@ Cyclone V PHY and timing constraints cannot be completed.
 [clock-topology]: https://docs.altera.com/r/docs/844310/26.1/lvds-tunneling-protocol-and-interface-ltpi-ip-user-guide/clock-topology
 [frame-format]: https://docs.altera.com/r/docs/844310/26.1/lvds-tunneling-protocol-and-interface-ltpi-ip-user-guide/ltpi-frame
 [ocp-spec]: https://www.opencompute.org/documents/ocp-dc-scm-2-0-ltpi-ver-1-0-pdf
-[cyclone-v]: https://www.intel.com/content/www/us/en/products/details/fpga/cyclone/v/documentation.html
+[cyclone-v]: https://docs.altera.com/r/docs/683375/current/cyclone-v-device-handbook-volume-1-device-interfaces-and-integration/lvds-serdes-circuitry
