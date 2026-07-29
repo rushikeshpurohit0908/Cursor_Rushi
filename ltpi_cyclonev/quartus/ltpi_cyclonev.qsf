@@ -1,0 +1,52 @@
+# -----------------------------------------------------------------------------
+# LTPI IP for Cyclone V FPGA - SPDX-License-Identifier: MIT
+#
+# ltpi_cyclonev.qsf
+#
+# Example Quartus Prime project settings. The FAMILY/DEVICE below (Cyclone V
+# SoC, 5CSEBA6U23I7 - as used on e.g. the Terasic DE10-Nano) is only a
+# starting point: change DEVICE to match your actual board, and replace the
+# example pin/I/O standard assignments with your board's real LTPI LVDS pair
+# and GPIO pin locations before compiling.
+# -----------------------------------------------------------------------------
+
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U23I7
+set_global_assignment -name TOP_LEVEL_ENTITY ltpi_cyclonev_device_top
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP 0
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 85
+set_global_assignment -name ERROR_CHECK_FREQUENCY_DIVISOR 1
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/common/ltpi_pkg.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/common/crc8.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/common/encoder_8b10b.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/common/decoder_8b10b.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/link/ltpi_symbol_serializer.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/link/ltpi_symbol_align.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/link/ltpi_frame_tx.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/link/ltpi_frame_rx.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/link/ltpi_link_ctrl.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/ltpi_top.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/phy/cyclonev/cv_pll.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "../rtl/phy/cyclonev/ltpi_phy_cyclonev.sv"
+set_global_assignment -name SYSTEMVERILOG_FILE "rtl/ltpi_cyclonev_device_top.sv"
+set_global_assignment -name SDC_FILE "constraints/ltpi.sdc"
+
+# ---- Example clock / reset pins (EDIT to match your board) ----
+set_location_assignment PIN_AF14 -to REF_CLK
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to REF_CLK
+set_location_assignment PIN_AH17 -to RESET_N
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to RESET_N
+
+# ---- Example LTPI LVDS pair (EDIT: must be a true-LVDS-capable I/O bank) ----
+# set_location_assignment PIN_xx -to LTPI_TX_D
+# set_location_assignment PIN_xx -to "LTPI_TX_D(n)"
+# set_instance_assignment -name IO_STANDARD LVDS -to LTPI_TX_D
+# set_location_assignment PIN_xx -to LTPI_TX_CLK
+# set_location_assignment PIN_xx -to "LTPI_TX_CLK(n)"
+# set_instance_assignment -name IO_STANDARD LVDS -to LTPI_TX_CLK
+# set_location_assignment PIN_xx -to LTPI_RX_D
+# set_location_assignment PIN_xx -to "LTPI_RX_D(n)"
+# set_instance_assignment -name IO_STANDARD LVDS -to LTPI_RX_D
+
+set_global_assignment -name NUM_PARALLEL_PROCESSORS ALL
