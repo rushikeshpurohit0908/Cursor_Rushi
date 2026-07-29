@@ -1,123 +1,168 @@
-# CvP with Avalon-ST: Peripheral Image Guide
+# Agilex™ 7 CvP: Avalon-ST Peripheral Image Guide
 
-This guide describes how to build, split, and program a **Configuration via Protocol (CvP)**
-periphery image using the **Avalon® Streaming (Avalon-ST)** PCIe hard IP interface. It
-focuses on the static `.periph.jic` image that must be stored in on-board flash before the
-host can download the reconfigurable `.core.rbf` over PCIe.
+This guide covers **Configuration via Protocol (CvP) Initialization** on **Agilex™ 7**
+FPGAs using the **Avalon® Streaming (Avalon-ST)** PCIe hard IP. Focus is the static
+periphery image (`*.periph.jic`) that must be programmed to on-board QSPI flash before the
+host can download the core image (`*.core.rbf`) over PCIe.
 
-## What CvP splits
+Primary reference: [Agilex 7 Device CvP Implementation User Guide](https://docs.altera.com/r/docs/683763/23.1/agilextm-7-device-configuration-via-protocol-cvp-implementation-user-guide/).
 
-CvP partitions one full bitstream into two images:
+## Agilex 7 CvP images
 
-| Image | File | Contents | Storage |
+CvP splits one compiled bitstream into two images:
+
+| Image | File | Contents (Agilex 7) | Storage |
 | --- | --- | --- | --- |
-| Periphery | `*.periph.jic` | PCIe hard IP, transceivers, I/O, clocks, and other static periphery logic | On-board QSPI/AS flash |
-| Core | `*.core.rbf` | FPGA fabric (LABs, M20K/MLAB, DSP, and other CRAM-controlled logic) | Host memory, loaded over PCIe |
+| Periphery | `*.periph.jic` | CvP PCIe hard IP core only (static; not reconfigurable) | On-board QSPI via AS x4 |
+| Core | `*.core.rbf` | Entire device except the CvP PCIe core | Host memory, loaded over PCIe |
 
-The periphery image is static. After you program it to flash, you can update only the core
-image without reprogramming flash, as long as the new core image remains compatible with the
-existing periphery image.
+- Recommended QSPI size for the periphery image: **≤ 128 Mb**.
+- Core image size must not exceed the Agilex 7 configuration bitstream size in the device
+  datasheet.
+- After the periphery image is in flash, you can update only the core image without
+  reprogramming flash, as long as the new core remains compatible with that periphery.
 
-## Why Avalon-ST for CvP
+## Avalon-ST PCIe IP for Agilex 7
 
-For CvP initialization, instantiate one of the **Avalon Streaming** PCIe IP cores (not the
-memory-mapped variant):
+Instantiate the tile that matches your device series. Use the **Avalon Streaming** IP (not
+Avalon-MM / MCDMA):
 
-- **Agilex 7:** P-Tile, R-Tile, or F-Tile Avalon® Streaming IP for PCI Express®
-- **Stratix 10:** P-Tile Avalon® Streaming IP for PCI Express®
-- **Older families (Arria V / Cyclone V / Stratix V):** Hard IP for PCI Express with
-  Avalon-ST application interface
+| Tile | IP Catalog name | Typical Agilex 7 series |
+| --- | --- | --- |
+| P-Tile | **P-Tile Avalon® Streaming IP for PCI Express®** | F-Series / I-Series with P-Tile |
+| R-Tile | **R-Tile Avalon® Streaming IP for PCI Express®** | I-Series with R-Tile |
+| F-Tile | **F-Tile Avalon® Streaming IP for PCI Express®** | F-Series / I-Series with F-Tile |
 
-The CvP PCIe endpoint must live in the static periphery region. Enabling CvP in the Avalon-ST
-PCIe IP tells Quartus® Prime to place the endpoint in the required hard IP location and to
-generate separate periphery and core programming files at conversion time.
+### CvP enable per tile
 
-> **Note:** Agilex 5 uses the GTS AXI Streaming IP for PCIe. The CvP flow is the same
-> conceptually, but the IP name and some GUI tabs differ. This guide uses Agilex 7
-> Avalon-ST terminology; adapt IP names for your device family.
+| Tile | Where to enable CvP |
+| --- | --- |
+| P-Tile | **Top-Level Settings** → **Enable CVP (Intel VSEC)** |
+| R-Tile | **Top-Level Settings** → **Enable CVP (Intel VSEC)** |
+| F-Tile | **PCIe0 Settings → PCIe0 PCI Express / PCI Capabilities → PCIe0 VSEC** → **Enable CVP (Intel VSEC)** |
 
-## Design flow overview
+### Port / lane rules
+
+- CvP uses **Port 0** only.
+- For Gen3/Gen4 **x16**, Port 0 (lanes 0–15) supports CvP.
+- For Gen3/Gen4 **x8**, only Port 0 (lanes 0–7) supports CvP; Port 1 does not.
+- For **PCIe 3.0 2x8** or **PCIe 4.0 2x8**:
+  - PCIe 0 **Device ID** = `0x00000000`
+  - PCIe 1 **Device ID** = non-zero
+  - The Altera CvP driver registers Port 0 when Device ID is zero.
+
+> **Note:** P-Tile Avalon-MM is not available from Quartus® Prime 21.2 onward. For
+> Avalon-MM style applications use the MCDMA-based PCIe Avalon-MM IP; for this CvP
+> periphery flow, use Avalon-ST as shown above.
+
+## Design flow
 
 ```mermaid
 flowchart LR
-    A[Instantiate Avalon-ST PCIe IP<br/>Enable CVP Intel VSEC] --> B[Set CvP device options<br/>Initialization and Update]
-    B --> C[Compile design<br/>produce .sof]
-    C --> D[Programming File Generator<br/>cvp=on]
+    A[P/R/F-Tile Avalon-ST PCIe<br/>Enable CVP Intel VSEC] --> B[Device options<br/>CvP Init and Update<br/>AS x4 Fast]
+    B --> C[Compile<br/>.sof]
+    C --> D[quartus_pfg<br/>cvp=on]
     D --> E[.periph.jic]
     D --> F[.core.rbf]
-    E --> G[Program flash via JTAG/AS]
-    G --> H[Power cycle / re-enumerate PCIe]
-    H --> I[Load .core.rbf over PCIe link]
+    E --> G[Program QSPI via JTAG]
+    G --> H[Power cycle<br/>PCIe re-enumerate]
+    H --> I[Load .core.rbf over PCIe]
 ```
 
 ## Step 1: Generate Avalon-ST PCIe IP with CvP enabled
 
-1. Open **Quartus® Prime Pro Edition**.
-2. On the **Tools** menu, click **Platform Designer**.
-3. Create a new system and add the tile-appropriate Avalon-ST PCIe IP:
-   - P-Tile: **P-Tile Avalon® Streaming IP for PCI Express®**
-   - R-Tile: **R-Tile Avalon® Streaming IP for PCI Express®**
-   - F-Tile: **F-Tile Avalon® Streaming IP for PCI Express®**
-4. On **Top-Level Settings**, enable **Enable CVP (Intel VSEC)**.
+1. Open **Quartus® Prime Pro Edition** and create or open your Agilex 7 project.
+2. **Tools → Platform Designer**. Create a new system (or edit an existing one).
+3. Delete the default `clock_in` / `reset_in` components if starting fresh.
+4. From the IP Catalog, add your tile’s Avalon-ST PCIe IP (table above).
+5. Set PCIe parameters (Gen, width, BARs, Device ID / Vendor ID) for your board.
+6. Enable **Enable CVP (Intel VSEC)** on the tab for your tile (table above).
+7. On **Example Designs**, select **Synthesis** (and **Simulation** if needed). Generated
+   file format is Verilog only.
+8. Click **Generate Example Design**, then open `pcie_ed.qpf` or integrate the IP into
+   your top-level design.
+9. Assign pins for the selected PCIe hard block:
+   - PCIe refclk
+   - `PERST#`
+   - Transceiver lanes for the correct tile (bottom-left / top-left as required)
+   - Do not move the hard IP pin allocation; lane reversal / polarity inversion on the PCB
+     are supported by the IP.
 
-   This option is required when using the Altera CvP driver or the Linux FPGA manager flow.
+For devices with two PCIe hard IP blocks on the left side, CvP can use either the lower or
+upper block — pin assignments must match the block you chose.
 
-5. Configure PCIe link parameters (Gen, lane width, BARs, and so on) for your board.
+## Step 2: Agilex 7 CvP device and pin options
 
-6. **Dual x8 mode only:** If you use PCIe 3.0 2x8 or PCIe 4.0 2x8:
-   - On **PCIe 0 Settings**, leave **Device ID** at `0x00000000`.
-   - On **PCIe 1 Settings**, set **Device ID** to a non-zero value.
-   - Only **Port 0** can be used for CvP; the driver registers Port 0 when its Device ID is zero.
+**Assignments → Device → Device and Pin Options**
 
-7. On **Example Designs**, select **Synthesis** (and **Simulation** if needed), then click
-   **Generate Example Design**. Open the generated `pcie_ed.qpf` project or integrate the
-   generated IP into your own top-level design.
+### Configuration
 
-8. Assign PCIe refclk, PERST#, and lane pins to the correct transceiver bank. CvP requires
-   the hard PCIe block pins to match the IP tile you selected.
+| Setting | Value |
+| --- | --- |
+| Configuration scheme | **Active Serial x4 (can use Configuration Device)** |
+| Active serial clock source | **166 MHz** |
+| Configuration clock source (General) | **25 MHz**, **100 MHz**, or **125 MHz** (board OSC) |
 
-## Step 2: Configure CvP in Device and Pin Options
+**Configuration Pin Options:**
 
-1. On the **Assignments** menu, click **Device**.
-2. Under **Configuration**:
-   - Set **Configuration scheme** to **Active Serial x4 (can use Configuration Device)**.
-   - Open **Configuration Pin Options** and enable:
-     - **USE CONF_DONE output**
-     - **USE CVP_CONFDONE output**
-   - Assign `CONF_DONE` and `CVP_CONFDONE` to the appropriate SDM I/O pins.
-3. Under **CvP Settings**, set **Configuration via Protocol** to **Initialization and update**.
-4. Set the AS clock source to **166 MHz** (with a 25 MHz, 100 MHz, or 125 MHz configuration
-   clock source under **General**, per your board crystal).
+- Enable **USE CONF_DONE output** and **USE CVP_CONFDONE output**.
+- Assign both to SDM I/O pins.
+- Prefer **SDM_IO16** for `CONF_DONE`. If you use another SDM I/O (except SDM_IO0 /
+  SDM_IO16), add an external **4.7 kΩ** pull-down on that pin.
 
-## Step 3: Compile the design
+### CvP Settings
 
-Run a full compilation to produce `output_files/<top>.sof`.
+| Setting | Value |
+| --- | --- |
+| Configuration via Protocol | **Initialization and update** |
+
+### Board MSEL (required for CvP Init)
+
+Set the Agilex 7 `MSEL[2:0]` straps for **Active Serial x4 Fast mode**:
+
+| Configuration scheme | MSEL[2:0] |
+| --- | --- |
+| AS x4 Fast (CvP Init) | **001** |
+
+AS x4 Fast provides the shortest POR delay so the PCIe link can train within the PCIe
+timing window. Total power-supply ramp (`tRAMP`) must be **&lt; 10 ms**.
+
+## Step 3: Compile
 
 ```text
 Processing → Start Compilation
 ```
 
-Resolve any pin, timing, or PCIe placement errors before continuing. CvP designs must use the
-CMU/transceiver PLL and hard reset controller required by the PCIe hard IP.
+Output: `output_files/<top>.sof`. Fix PCIe placement, pin, and timing errors before
+continuing.
 
-## Step 4: Generate the periphery and core images
+## Step 4: Generate `.periph.jic` and `.core.rbf`
 
 ### GUI: Programming File Generator
 
-1. On the **Tools** menu, open **Programming File Generator**.
-2. On **Output files**, select:
+1. **Tools → Programming File Generator**.
+2. **Output files:**
    - **JTAG Indirect Configuration File for Periphery Configuration (.jic)**
    - **Raw Binary File for CvP Core Configuration (.rbf)**
-3. On **Input files**, add your compiled `.sof`.
-4. On **Configuration device**, add your QSPI flash part and create a partition for the
-   `.sof` input (Address Mode: **Auto**).
-5. Generate the files. Quartus produces:
-   - `<name>.periph.jic` — program this to flash
-   - `<name>.core.rbf` — load this over PCIe after link up
+   - Optionally `.map` / `.rpd` for third-party flash tools
+3. **Input files:** Add Bitstream → select your `.sof`.
+4. **Configuration device:**
+   - **Add Device** → select your QSPI part
+   - **Add Partition** → Input file = your `.sof`, Address Mode = **Start** or **Auto**
+   - **Select** flash loader → Device family **Agilex** → pick your FPGA part
+5. Generate. Expected outputs:
+   - `<name>.periph.jic`
+   - `<name>.core.rbf`
 
 ### Command line: `quartus_pfg`
 
-Use the helper script in `scripts/generate_cvp_images.sh`, or run `quartus_pfg` directly:
+```bash
+# Example: Agilex 7 F-Series flash loader prefix + 128 Mb QSPI
+QSPI_DEVICE=MT25QU128 FLASH_LOADER=AGFB014R24AR0 \
+  ./scripts/generate_cvp_images.sh output_files/top.sof output_files/top
+```
+
+Or directly:
 
 ```bash
 quartus_pfg -c output_files/top.sof output_files/top.jic \
@@ -127,97 +172,99 @@ quartus_pfg -c output_files/top.sof output_files/top.jic \
   -o cvp=on
 ```
 
-Replace `device` and `flash_loader` with values for your board. The `flash_loader` value is
-typically a prefix of your FPGA part number. Use the Programming File Generator GUI once to
-discover valid options, then save a `.pfg` file for repeatable builds:
+| Parameter | Description |
+| --- | --- |
+| `device` | On-board QSPI part (e.g. `MT25QU128`) |
+| `flash_loader` | Agilex 7 FPGA part prefix used as the JIC helper image (from Programming File Generator → Select Devices → Agilex) |
+| `mode` | `ASX4` |
+| `cvp` | `on` — produces `.periph.jic` + `.core.rbf` |
+
+Save a `.pfg` from the GUI once for your board, then reuse:
 
 ```bash
-quartus_pfg -c saved_settings.pfg
+PFG_SETTINGS=board_cvp.pfg ./scripts/generate_cvp_images.sh output_files/top.sof
 ```
 
-### Output file summary
+### Example flash_loader values (Agilex 7)
 
-| File | Purpose |
+`flash_loader` is typically the alphanumeric prefix of your FPGA OPN. Confirm in the GUI
+for your exact part:
+
+| Device example | Typical `flash_loader` style |
 | --- | --- |
-| `*.periph.jic` | Static periphery image for QSPI/AS flash |
-| `*.core.rbf` | Reconfigurable core fabric image for PCIe download |
-| `*.map` (optional) | Memory map for third-party programmers |
-| `*.rpd` (optional) | Raw flash data for third-party programmers |
+| Agilex 7 F-Series (e.g. AGFB014…) | `AGFB014R24AR0` (example) |
+| Other Agilex 7 OPNs | Prefix matching your selected device in Programming File Generator |
 
-## Step 5: Program the periphery image to flash
+## Step 5: Program the periphery image
 
-1. Connect JTAG to the FPGA.
-2. Open **Quartus® Prime Programmer**.
-3. Add your Agilex/Stratix device and the configuration flash device.
-4. Assign `*.periph.jic` to the flash device.
-5. Click **Start** to program flash.
-6. **Power-cycle** the FPGA card and host so the new periphery image loads and PCIe
+1. Install the Agilex 7 PCIe card in the DUT host and power on.
+2. Open **Quartus® Prime Programmer** → **Auto Detect**.
+3. Select the **Agilex™ 7** device → Change File → open `*.periph.jic`.
+4. Check **Program/Configure** for the FPGA and the QSPI flash.
+5. Click **Start**.
+6. **Power-cycle** the FPGA card and host so AS x4 loads the new periphery and PCIe
    re-enumerates.
 
-Verify the link:
+Verify link training before loading the core:
 
 ```bash
-lspci -d 1172:   # Altera/Intel vendor ID; adjust for your Device ID
+lspci -nn | grep -i 1172   # Altera/Intel VID; use your Device ID if different
 ```
 
-The endpoint should report the expected link speed and width before you load the core image.
+Confirm expected Gen and lane width (RW Utilities or `lspci -vv`).
 
 ## Step 6: Load the core image over PCIe
 
-After the periphery image is active and the PCIe link is in L0:
-
-### Linux (FPGA manager)
+### Linux FPGA manager
 
 ```bash
-cp top.core.rbf /lib/firmware/
-echo top.core.rbf > /sys/kernel/debug/fpga_manager/fpga0/firmware_name
+sudo ./scripts/load_cvp_core.sh top.core.rbf
+# or manually:
+sudo cp top.core.rbf /lib/firmware/
+echo top.core.rbf | sudo tee /sys/kernel/debug/fpga_manager/fpga0/firmware_name
 dmesg | tail
 ```
 
-### Linux (Altera CvP driver)
+### Linux Altera CvP driver (`/dev/altera_cvp`)
 
 ```bash
-cp top.core.rbf /lib/firmware/
-echo top.core.rbf > /dev/altera_cvp
+sudo cp top.core.rbf /lib/firmware/
+echo top.core.rbf | sudo tee /dev/altera_cvp
 ```
 
-### Windows / legacy flow
+### Verify success
 
-```bash
-quartus_cvp --vid=1172 --did=<device_id> top.core.rbf
-```
+- `CVP_CONFDONE` / `CVP_DONE` asserts high.
+- `dmesg` shows successful CvP completion.
+- Application logic in the core fabric runs.
 
-Use the Vendor ID and Device ID from your PCIe IP **Device Identification Registers** tab.
+## Core-update compatibility (same periphery)
 
-### Verify CvP completion
+Keep these fixed across core revisions that share one programmed `.periph.jic`:
 
-- `CVP_CONFDONE` (or `CVP_DONE` status register) should assert high after a successful core load.
-- Your application logic in the core region should begin operating.
-- Re-loading a new `.core.rbf` does not require reprogramming flash, as long as the core
-  remains compatible with the programmed periphery image.
+- Avalon-ST PCIe tile and **Enable CVP (Intel VSEC)**
+- Vendor ID, Device ID, BAR map, link width / Gen
+- PCIe hard-block and transceiver pin assignments
+- CvP device options (**Initialization and update**, AS x4)
 
-## Compatibility rules for core updates
+A new periphery revision requires reprogramming QSPI and a power cycle.
 
-When you ship multiple core revisions against one programmed periphery image:
-
-- Do not change PCIe hard IP parameters (Vendor ID, Device ID, BAR layout, lane width).
-- Do not move or remove the CvP-enabled Avalon-ST PCIe endpoint from the static region.
-- Keep transceiver and refclk pin assignments identical.
-- For a new periphery revision, reprogram flash and power-cycle before deploying new cores.
-
-## Troubleshooting
+## Troubleshooting (Agilex 7)
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| No `.periph.jic` after conversion | CvP not enabled in device options or PCIe IP | Enable **Initialization and update** and **Enable CVP (Intel VSEC)** |
-| PCIe link does not train | Wrong periphery image, refclk, or PERST# | Reprogram flash; verify pin assignments |
-| Core load fails | VID/DID mismatch, driver not bound, or incompatible core | Match `quartus_cvp` IDs; check `dmesg` |
-| `CVP_CONFDONE` stays low | Core image built against different periphery revision | Rebuild core from the same `.sof` split as the programmed periphery |
-| Dual-port x8: wrong port used for CvP | Port 1 has Device ID 0 | Set Port 0 Device ID to `0x00000000` only |
+| No `.periph.jic` | CvP not enabled in IP or device options | Enable **CVP (Intel VSEC)** and **Initialization and update** |
+| PCIe does not train after flash program | Wrong MSEL, AS clock, or periphery | Set MSEL=`001` (AS x4 Fast); verify AS clock 166 MHz; reprogram `.periph.jic` |
+| Link late / host timeout | Power ramp too slow | Ensure `tRAMP` &lt; 10 ms; use AS x4 Fast |
+| Core load fails | Driver / VID-DID / wrong port | Use Port 0; match Device ID; check `dmesg` |
+| `CVP_CONFDONE` stays low | Core from different periphery build | Rebuild and re-split from the same `.sof` as the flashed periphery |
+| Dual x8: CvP on wrong port | Port 1 Device ID is 0 | Port 0 Device ID must be `0x00000000` only |
 
 ## References
 
-- [Agilex 7 CvP Implementation User Guide](https://docs.altera.com/r/docs/683763/23.1/agilextm-7-device-configuration-via-protocol-cvp-implementation-user-guide/)
-- [Agilex 5 CvP Implementation User Guide](https://docs.altera.com/r/docs/813775/25.1/configuration-via-protocol-cvp-implementation-user-guide-agilextm-5-fpgas-and-socs/)
-- [P-Tile Avalon Streaming IP for PCIe User Guide](https://www.intel.com/content/www/us/en/docs/programmable/683517/current/p-tile-avalon-streaming-ip-for-pcie-user-guide.html)
-- [Creating Configuration Files from Command Line (`quartus_pfg`)](https://docs.altera.com/r/docs/683847/26.1/stratix-10-soc-fpga-boot-user-guide/creating-configuration-files-from-command-line)
+- [Agilex 7 Device CvP Implementation User Guide](https://docs.altera.com/r/docs/683763/23.1/agilextm-7-device-configuration-via-protocol-cvp-implementation-user-guide/)
+- [Agilex 7 Configuration User Guide](https://docs.altera.com/r/docs/683673/26.1/agilextm-7-configuration-user-guide/)
+- [P-Tile Avalon Streaming IP for PCIe User Guide](https://docs.altera.com/r/docs/683059/25.3/p-tile-avalon-streaming-ip-for-pci-express-user-guide/)
+- [R-Tile Avalon Streaming IP for PCIe User Guide](https://www.intel.com/content/www/us/en/docs/programmable/683501/current/r-tile-avalon-streaming-intel-fpga-ip-for-pcie.html)
+- [F-Tile Avalon Streaming IP for PCIe User Guide](https://docs.altera.com/r/docs/683140/25.3/f-tile-avalon-streaming-ip-for-pci-express-user-guide/)
+- [`quartus_pfg` command-line configuration files](https://docs.altera.com/r/docs/683847/26.1/stratix-10-soc-fpga-boot-user-guide/creating-configuration-files-from-command-line)

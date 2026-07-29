@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Generate CvP periphery (.periph.jic) and core (.core.rbf) images from a compiled SOF.
+# Generate Agilex 7 CvP periphery (.periph.jic) and core (.core.rbf) images from a SOF.
 #
 # Usage:
 #   ./scripts/generate_cvp_images.sh <design.sof> [output_basename]
 #
-# Environment overrides (required unless using a saved .pfg file):
-#   QSPI_DEVICE     QSPI flash part, e.g. MT25QU128
-#   FLASH_LOADER    Flash loader prefix for your FPGA, e.g. AGFB014R24AR0
+# Environment:
+#   QSPI_DEVICE     QSPI flash part (default: MT25QU128 — 128 Mb recommended for periphery)
+#   FLASH_LOADER    Agilex 7 FPGA part prefix for the JIC helper image (required unless .pfg)
 #   PFG_SETTINGS    Optional path to a saved Programming File Generator .pfg file
 #
-# Example:
-#   QSPI_DEVICE=MT25QU128 FLASH_LOADER=AGFB014R24AR0 \
+# Example (Agilex 7 F-Series):
+#   FLASH_LOADER=AGFB014R24AR0 \
 #     ./scripts/generate_cvp_images.sh output_files/top.sof output_files/top
+#
+# Discover FLASH_LOADER: Programming File Generator → Configuration device → Select →
+# Device family Agilex → Device name matching your OPN.
 
 set -euo pipefail
 
@@ -36,16 +39,17 @@ if ! command -v quartus_pfg >/dev/null 2>&1; then
 fi
 
 if [[ -n "${PFG_SETTINGS:-}" ]]; then
-  echo "Generating CvP images using settings: $PFG_SETTINGS"
+  echo "Generating Agilex 7 CvP images using settings: $PFG_SETTINGS"
   quartus_pfg -c "$PFG_SETTINGS"
 else
-  : "${QSPI_DEVICE:?Set QSPI_DEVICE (e.g. MT25QU128)}"
-  : "${FLASH_LOADER:?Set FLASH_LOADER (e.g. AGFB014R24AR0)}"
+  QSPI_DEVICE="${QSPI_DEVICE:-MT25QU128}"
+  : "${FLASH_LOADER:?Set FLASH_LOADER to your Agilex 7 OPN prefix (e.g. AGFB014R24AR0)}"
 
   JIC_OUT="${OUT_BASE}.jic"
-  echo "Generating CvP images from: $SOF"
+  echo "Generating Agilex 7 CvP images from: $SOF"
   echo "  QSPI device:   $QSPI_DEVICE"
   echo "  Flash loader:  $FLASH_LOADER"
+  echo "  Mode:          ASX4 (cvp=on)"
   echo "  Output prefix: $OUT_BASE"
 
   quartus_pfg -c "$SOF" "$JIC_OUT" \
@@ -57,7 +61,9 @@ fi
 
 echo ""
 echo "Generated files (expected):"
-ls -1 "${OUT_BASE}".periph.jic "${OUT_BASE}".core.rbf 2>/dev/null || {
-  echo "  ${OUT_BASE}.periph.jic  (program to flash)"
-  echo "  ${OUT_BASE}.core.rbf    (load over PCIe)"
-}
+if ls -1 "${OUT_BASE}".periph.jic "${OUT_BASE}".core.rbf 2>/dev/null; then
+  :
+else
+  echo "  ${OUT_BASE}.periph.jic  (program to Agilex 7 QSPI flash)"
+  echo "  ${OUT_BASE}.core.rbf    (load over PCIe after link up)"
+fi
