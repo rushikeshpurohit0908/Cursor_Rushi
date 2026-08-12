@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Compute for LRDE · Altera FPGA Inference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #0c1620;
+    --muted: #4a5a66;
+    --paper: #f4f1eb;
+    --panel: #ffffff;
+    --line: #d2cdc4;
+    --radar: #0a6b52;
+    --radar-deep: #064536;
+    --steel: #16324f;
+    --amber: #c2410c;
+    --chip: #e4f1ec;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "DM Sans", system-ui, sans-serif;
+    background: #0c1620;
+    color: var(--ink);
+    overflow: hidden;
+  }
+
+  .deck {
+    height: 100vh;
+    width: 100vw;
+    position: relative;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    padding: clamp(28px, 4vw, 56px) clamp(28px, 5vw, 72px) 72px;
+    background:
+      radial-gradient(900px 420px at 0% 0%, rgba(10,107,82,0.14), transparent 55%),
+      radial-gradient(700px 380px at 100% 0%, rgba(22,50,79,0.12), transparent 50%),
+      linear-gradient(160deg, #efeae2 0%, var(--paper) 45%, #ebe6de 100%);
+    flex-direction: column;
+    animation: in 0.45s ease both;
+  }
+  .slide.active { display: flex; }
+
+  .slide.dark {
+    background:
+      linear-gradient(135deg, #0c1620 0%, #16324f 52%, #0a6b52 140%),
+      url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='0.03'%3E%3Cpath d='M0 0h40v40H0V0zm40 40h40v40H40V40z'/%3E%3C/g%3E%3C/svg%3E");
+    color: #eef3f0;
+  }
+  .slide.dark .muted,
+  .slide.dark p,
+  .slide.dark li { color: rgba(238,243,240,0.82); }
+  .slide.dark h1, .slide.dark h2 { color: #fff; }
+  .slide.dark .eyebrow { color: rgba(255,255,255,0.7); }
+
+  .eyebrow {
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--radar);
+    font-weight: 600;
+    margin-bottom: 14px;
+  }
+
+  h1 {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(2.4rem, 5.5vw, 4rem);
+    line-height: 1.05;
+    color: var(--steel);
+    max-width: 16ch;
+    margin-bottom: 16px;
+  }
+
+  h2 {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(1.9rem, 3.8vw, 2.8rem);
+    color: var(--steel);
+    margin-bottom: 8px;
+    line-height: 1.1;
+  }
+
+  .subtitle {
+    font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+    color: var(--muted);
+    max-width: 52ch;
+    margin-bottom: 28px;
+    line-height: 1.45;
+  }
+
+  .brand-mark {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: clamp(2.8rem, 7vw, 5rem);
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+    margin-top: auto;
+    padding-top: 24px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    font-size: 0.95rem;
+  }
+  .meta-row span strong {
+    display: block;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.65;
+    font-weight: 500;
+    margin-bottom: 2px;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: clamp(18px, 3vw, 36px);
+    flex: 1;
+    align-content: start;
+    min-height: 0;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    flex: 1;
+    align-content: start;
+  }
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    flex: 1;
+    align-content: start;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--radar);
+    padding: 18px 18px 16px;
+  }
+  .card h3 {
+    font-size: 1.02rem;
+    margin-bottom: 6px;
+    color: var(--ink);
+  }
+  .card p, .card li {
+    font-size: 0.92rem;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .card ul { padding-left: 18px; }
+  .card li { margin-bottom: 4px; }
+
+  .dark .card {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.14);
+    border-left-color: #7dcea0;
+  }
+  .dark .card h3 { color: #fff; }
+  .dark .card p, .dark .card li { color: rgba(238,243,240,0.8); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    background: var(--panel);
+    border: 1px solid var(--line);
+  }
+  th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: #ebe6de;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 18px; }
+  .chip {
+    background: var(--chip);
+    border: 1px solid #bfd8ce;
+    color: var(--radar-deep);
+    padding: 6px 11px;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .dark .chip {
+    background: rgba(255,255,255,0.08);
+    border-color: rgba(255,255,255,0.18);
+    color: #d7efe4;
+  }
+
+  .flow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: clamp(0.72rem, 1.1vw, 0.85rem);
+    background: var(--ink);
+    color: #d8ebe2;
+    padding: 18px 16px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    border-radius: 2px;
+  }
+
+  .kpi {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .kpi div {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 14px;
+  }
+  .kpi strong {
+    display: block;
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: 1.6rem;
+    color: var(--radar);
+    font-weight: 400;
+  }
+  .kpi span { font-size: 0.82rem; color: var(--muted); }
+
+  .steps {
+    display: grid;
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 12px;
+    align-items: start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+  .num {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: var(--steel);
+    color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700;
+  }
+  .step h3 { font-size: 0.98rem; margin-bottom: 2px; }
+  .step p { font-size: 0.88rem; color: var(--muted); }
+
+  .two-col-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 28px;
+    list-style: none;
+    margin-top: 8px;
+  }
+  .two-col-list li {
+    position: relative;
+    padding-left: 16px;
+    color: var(--muted);
+    font-size: 0.98rem;
+  }
+  .two-col-list li::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 0.55em;
+    width: 7px; height: 7px;
+    background: var(--radar);
+  }
+
+  .footer-bar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    background: rgba(12, 22, 32, 0.92);
+    color: rgba(255,255,255,0.75);
+    font-size: 0.78rem;
+    z-index: 20;
+    backdrop-filter: blur(8px);
+  }
+  .footer-bar .nav-hint { opacity: 0.7; }
+  .progress {
+    position: absolute;
+    left: 0; bottom: 48px;
+    height: 3px;
+    background: var(--radar);
+    transition: width 0.3s ease;
+    z-index: 21;
+  }
+
+  .btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.25);
+    color: #fff;
+    padding: 4px 10px;
+    font: inherit;
+    cursor: pointer;
+    margin-left: 6px;
+  }
+  .btn:hover { border-color: #fff; }
+
+  @keyframes in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  @media (max-width: 900px) {
+    .grid-2, .grid-3, .grid-4, .kpi, .two-col-list { grid-template-columns: 1fr; }
+    .slide { padding: 24px 20px 70px; overflow: auto; }
+  }
+
+  @media print {
+    body { overflow: visible; background: white; }
+    .footer-bar, .progress { display: none; }
+    .slide {
+      display: flex !important;
+      position: relative;
+      page-break-after: always;
+      height: 100vh;
+      animation: none;
+    }
+  }
+</style>
+</head>
+<body>
+  <div class="deck" id="deck">
+
+    <!-- 1 -->
+    <section class="slide dark active" data-title="Title">
+      <div class="eyebrow">Proposal for LRDE · Bengaluru · Restricted</div>
+      <p class="brand-mark">Altera</p>
+      <h1>AI Compute Platform for LRDE</h1>
+      <p class="subtitle">Sovereign training hardware and Altera Agilex™ FPGA inference for radar signal intelligence, AESA processing aids, and real-time classification.</p>
+      <div class="chips">
+        <span class="chip">Electronics &amp; Radar Development Establishment</span>
+        <span class="chip">Training + Inference</span>
+        <span class="chip">Agilex FPGA AI Suite</span>
+      </div>
+      <div class="meta-row">
+        <span><strong>Audience</strong>LRDE leadership &amp; radar AI teams</span>
+        <span><strong>Focus</strong>Radar / AESA / EW-adjacent AI</span>
+        <span><strong>Version</strong>1.0 · Aug 2026</span>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide" data-title="Agenda">
+      <div class="eyebrow">Agenda</div>
+      <h2>What we will cover</h2>
+      <p class="subtitle">A complete path from LRDE training data to fielded FPGA inference inside radar timelines.</p>
+      <ol class="two-col-list" style="list-style: decimal; padding-left: 18px;">
+        <li style="padding-left: 0;">LRDE mission fit &amp; AI opportunities</li>
+        <li style="padding-left: 0;">End-to-end architecture</li>
+        <li style="padding-left: 0;">Training hardware (secure GPU lab)</li>
+        <li style="padding-left: 0;">Inference on Altera Agilex FPGAs</li>
+        <li style="padding-left: 0;">Software toolchain &amp; MLOps</li>
+        <li style="padding-left: 0;">LRDE use-case packages</li>
+        <li style="padding-left: 0;">Security &amp; sovereignty</li>
+        <li style="padding-left: 0;">PoC roadmap &amp; next steps</li>
+      </ol>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide" data-title="LRDE Context">
+      <div class="eyebrow">LRDE context</div>
+      <h2>Radar AI where it matters</h2>
+      <p class="subtitle">LRDE designs ground-based, shipborne, airborne, and space-related radar systems — AI must respect real-time DSP pipelines and SWaP.</p>
+      <div class="grid-3">
+        <div class="card">
+          <h3>AESA &amp; multifunction</h3>
+          <p>Fire-control, surveillance, 4D radars — multi-mode interleaved operation needs deterministic assistive AI.</p>
+        </div>
+        <div class="card">
+          <h3>Signal intelligence</h3>
+          <p>Pulse / emitter classification, LPI detection aids, clutter/anomaly separation on I/Q &amp; spectrograms.</p>
+        </div>
+        <div class="card">
+          <h3>Advanced research</h3>
+          <p>Hypersonic cues, stealth-detection aids, FOPEN features, netted-radar fusion — train secure, infer at the sensor.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide" data-title="Problem">
+      <div class="eyebrow">Problem</div>
+      <h2>Gaps in today’s radar AI path</h2>
+      <div class="grid-2">
+        <div>
+          <div class="card" style="margin-bottom:12px;">
+            <h3>Training</h3>
+            <ul>
+              <li>Classified I/Q &amp; track data cannot leave LRDE</li>
+              <li>Cloud GPUs unsuitable for air-gapped labs</li>
+              <li>Weak experiment / model lineage</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Inference</h3>
+            <ul>
+              <li>GPUs struggle with radar SWaP &amp; latency budgets</li>
+              <li>Need tight coupling to JESD / ADC / beam data</li>
+              <li>Long program life vs short GPU cycles</li>
+            </ul>
+          </div>
+        </div>
+        <div class="card" style="border-left-color: var(--amber);">
+          <h3>Required outcome</h3>
+          <p style="margin-bottom:10px;">A sovereign stack that lets LRDE:</p>
+          <ul>
+            <li><strong>Train</strong> on-prem on radar datasets</li>
+            <li><strong>Compile</strong> models to FPGA AI IP</li>
+            <li><strong>Deploy</strong> inside ERP / processor cabinets or payloads</li>
+            <li><strong>Update</strong> bitstreams without board respins</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section class="slide" data-title="Architecture">
+      <div class="eyebrow">Architecture</div>
+      <h2>Train once · Infer on Agilex</h2>
+      <div class="flow">LRDE SECURE LAB
+  Radar Data Vault → GPU Training Cluster → Model Registry
+                         │  ONNX / OpenVINO IR
+                         ▼
+  Quantize + Accuracy Gates → FPGA AI Suite (dla_compiler)
+                         │
+          ┌──────────────┼──────────────┐
+          ▼              ▼              ▼
+   Hostless Agilex   SoC Agilex 5    PCIe Agilex 7
+   (ERP / payload)   (edge node)     (shelter / C2)
+              ALTERA FPGA INFERENCE TIER</div>
+      <div class="kpi">
+        <div><strong>GPU</strong><span>Secure training &amp; fine-tune</span></div>
+        <div><strong>OpenVINO</strong><span>IR + hetero runtime</span></div>
+        <div><strong>Agilex</strong><span>Deterministic field inference</span></div>
+      </div>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide" data-title="Training HW">
+      <div class="eyebrow">Training hardware</div>
+      <h2>Air-gapped radar AI training lab</h2>
+      <p class="subtitle">Sized for LRDE model development on spectrograms, RD maps, tracks, and multi-sensor fusion sets.</p>
+      <table>
+        <thead>
+          <tr><th>Component</th><th>Reference spec</th><th>Role for LRDE</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>GPU nodes</td><td>8× datacenter GPUs/node, dual CPU, 1–2 TB RAM</td><td>CNN / transformer training</td></tr>
+          <tr><td>Fabric</td><td>NVLink + InfiniBand NDR / RoCE</td><td>Distributed training</td></tr>
+          <tr><td>Storage</td><td>Encrypted 0.5–2 PB object / parallel FS</td><td>I/Q archives, checkpoints</td></tr>
+          <tr><td>CPU ETL</td><td>High-core labeling &amp; feature nodes</td><td>RD maps, CFAR labels, sim data</td></tr>
+          <tr><td>Security</td><td>Air gap, bastion MFA, optional diode</td><td>Sovereign model export only</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide" data-title="Training SW">
+      <div class="eyebrow">Training software</div>
+      <h2>ML stack inside the wire</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Frameworks &amp; ops</h3>
+          <ul>
+            <li>PyTorch / TensorFlow (air-gapped registry)</li>
+            <li>DeepSpeed / FSDP for large models</li>
+            <li>Slurm or Kubernetes + Apptainer</li>
+            <li>MLflow / DVC for lineage</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Radar-specific data path</h3>
+          <ul>
+            <li>I/Q → STFT / RD / spectrogram pipelines</li>
+            <li>Synthetic + trial data blending</li>
+            <li>Golden sets for accuracy gates</li>
+            <li>Signed ONNX / IR promotion</li>
+          </ul>
+        </div>
+      </div>
+      <div class="steps" style="margin-top:14px;">
+        <div class="step">
+          <div class="num">→</div>
+          <div>
+            <h3>Handoff to inference</h3>
+            <p>Export ONNX → OpenVINO IR → FPGA AI Suite compile → signed bitstream / network-bin for LRDE platforms.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-title="FPGA Inference">
+      <div class="eyebrow">Inference hardware</div>
+      <h2>Altera Agilex™ for radar timelines</h2>
+      <p class="subtitle">FPGAs sit next to the exciter–receiver–processor chain — reconfigurable AI without breaking determinism.</p>
+      <table>
+        <thead>
+          <tr><th>Device</th><th>INT8 class*</th><th>LRDE placement</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Agilex 3</td><td>~2.6 TOPS</td><td>Miniaturized / SoC radar sensors</td></tr>
+          <tr><td>Agilex 5 E-Series</td><td>~26 TOPS</td><td>Compact processors, mobile radars</td></tr>
+          <tr><td>Agilex 5 D-Series</td><td>~152 TOPS</td><td>Multi-channel classification</td></tr>
+          <tr><td>Agilex 7 I/M-Series</td><td>~89 TOPS class</td><td>ERP co-process, PCIe, shelters</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:10px; font-size:0.8rem; color:var(--muted);">*Architecture- and IP-dependent; sized per model with FPGA AI Suite Architecture Optimizer.</p>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide" data-title="Form Factors">
+      <div class="eyebrow">Deployment</div>
+      <h2>Form factors for LRDE systems</h2>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Hostless / DDR-free</h3>
+          <p>AI IP in fabric beside DSP. Lowest latency for pulse/window classifiers inside ERP.</p>
+        </div>
+        <div class="card">
+          <h3>SoC (HPS)</h3>
+          <p>On-chip Linux + AI IP. Ideal for transportable radars and edge fusion nodes.</p>
+        </div>
+        <div class="card">
+          <h3>PCIe / OFS card</h3>
+          <p>Look-aside acceleration in operation shelters and lab validation racks.</p>
+        </div>
+      </div>
+      <div class="chips" style="margin-top:18px;">
+        <span class="chip">JESD204 / ADC attach</span>
+        <span class="chip">Aurora / Ethernet sensor nets</span>
+        <span class="chip">Bitstream encryption</span>
+        <span class="chip">Long defence lifecycle</span>
+      </div>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide" data-title="Why FPGA">
+      <div class="eyebrow">Why Altera</div>
+      <h2>FPGA vs GPU for LRDE inference</h2>
+      <table>
+        <thead>
+          <tr><th>Criterion</th><th>GPU</th><th>Altera FPGA</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Latency determinism</td><td>Batch / driver variable</td><td>Pipeline-friendly, stable</td></tr>
+          <tr><td>RF / DSP coupling</td><td>Needs host staging</td><td>Direct fabric I/O</td></tr>
+          <tr><td>Power in cabinet / payload</td><td>High</td><td>Lower W for fixed nets</td></tr>
+          <tr><td>Model update</td><td>Driver + app stack</td><td>Bitstream / network-bin</td></tr>
+          <tr><td>Program longevity</td><td>Short SKU cycles</td><td>10–15+ year class support</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide" data-title="Software">
+      <div class="eyebrow">Software toolchain</div>
+      <h2>From PyTorch to radar bitstream</h2>
+      <div class="flow">Train (PyTorch) → ONNX
+  → OpenVINO convert_model / ovc  →  IR (.xml/.bin)
+  → Quantize (INT8 / FP16) + golden accuracy gate
+  → FPGA AI Suite  dla_compiler --march &lt;arch.arch&gt;
+  → Architecture Optimizer (area ↔ FPS)
+  → Bit-accurate OpenVINO emulation
+  → Quartus Prime integrate AI IP → bitstream
+  → Runtime: FPGA  or  HETERO:FPGA,CPU  (or hostless)</div>
+      <p class="subtitle" style="margin-top:16px; margin-bottom:0;">Core tools: OpenVINO · FPGA AI Suite · Quartus Prime · optional Open FPGA Stack (OFS).</p>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-title="Use Cases">
+      <div class="eyebrow">LRDE packages</div>
+      <h2>Three PoC-ready use cases</h2>
+      <div class="grid-3">
+        <div class="card">
+          <h3>1. Emitter / pulse ID</h3>
+          <p>Spectrogram CNN on Agilex 7 hostless or PCIe. Continuous windows, deterministic latency for EW-adjacent radar modes.</p>
+        </div>
+        <div class="card">
+          <h3>2. Target / clutter assist</h3>
+          <p>RD-map or tracklet classifier on Agilex 5. Aids discrimination for fighters, slow movers, false-alarm reduction.</p>
+        </div>
+        <div class="card">
+          <h3>3. Netted fusion node</h3>
+          <p>Multi-radar feature fusion on Agilex 7 PCIe in shelter C2 — signed model hot-swap after trials.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide" data-title="Security">
+      <div class="eyebrow">Security</div>
+      <h2>Sovereignty by design</h2>
+      <div class="grid-4">
+        <div class="card"><h3>Data residency</h3><p>I/Q, tracks, and labels never leave LRDE premises.</p></div>
+        <div class="card"><h3>Air gap</h3><p>Training isolated; controlled diode export of IR/bitstreams only.</p></div>
+        <div class="card"><h3>Bitstream trust</h3><p>Encryption, authentication, anti-tamper options on Agilex.</p></div>
+        <div class="card"><h3>Indian partners</h3><p>Board / SOM qualification with SI &amp; DPSU ecosystem.</p></div>
+      </div>
+    </section>
+
+    <!-- 14 -->
+    <section class="slide" data-title="Roadmap">
+      <div class="eyebrow">Roadmap</div>
+      <h2>Phased engagement with LRDE</h2>
+      <div class="steps">
+        <div class="step"><div class="num">0</div><div><h3>Discovery — 4–6 weeks</h3><p>Workload survey (2 models), latency/SWaP envelopes, success metrics with ERP owners.</p></div></div>
+        <div class="step"><div class="num">1</div><div><h3>PoC — 8–12 weeks</h3><p>Port models to Agilex eval kits; accuracy vs golden set; latency report for radar windows.</p></div></div>
+        <div class="step"><div class="num">2</div><div><h3>Pilot — 3–6 months</h3><p>Rugged module or PCIe in processor cabinet; training-cluster slice; MLOps baseline.</p></div></div>
+        <div class="step"><div class="num">3</div><div><h3>Scale — program-driven</h3><p>Production SOM/PCIe, environmental qualification, ILS &amp; field update process.</p></div></div>
+      </div>
+    </section>
+
+    <!-- 15 -->
+    <section class="slide" data-title="BOM">
+      <div class="eyebrow">Reference BOM</div>
+      <h2>What LRDE would procure</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Training lab</h3>
+          <ul>
+            <li>GPU nodes + IB fabric</li>
+            <li>Encrypted storage</li>
+            <li>Hardened MLOps stack</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Inference &amp; tools</h3>
+          <ul>
+            <li>Agilex 7 PCIe + Agilex 5 kits</li>
+            <li>Quartus Prime + FPGA AI Suite</li>
+            <li>OpenVINO + enablement services</li>
+          </ul>
+        </div>
+      </div>
+      <p class="subtitle" style="margin-top:18px; margin-bottom:0;">Detailed commercial annex after discovery workshop. See <code>BOM_Reference.md</code>.</p>
+    </section>
+
+    <!-- 16 -->
+    <section class="slide dark" data-title="Next Steps">
+      <div class="eyebrow">Call to action</div>
+      <h2>Recommended next steps</h2>
+      <div class="grid-2" style="margin-top:8px;">
+        <div class="card">
+          <h3>1. Workshop</h3>
+          <p>2-day architecture session at LRDE — nominate radar AI &amp; ERP stakeholders.</p>
+        </div>
+        <div class="card">
+          <h3>2. Select models</h3>
+          <p>Pick two flagship networks (e.g. pulse ID + RD classifier) for Phase-1 PoC.</p>
+        </div>
+        <div class="card">
+          <h3>3. Lock gates</h3>
+          <p>Agree accuracy, window latency, and power budgets before compile.</p>
+        </div>
+        <div class="card">
+          <h3>4. SOW</h3>
+          <p>Issue technical SOW + commercial annex for PoC kits and FAE support.</p>
+        </div>
+      </div>
+      <div class="meta-row">
+        <span><strong>Prepared for</strong>LRDE, DRDO Bengaluru</span>
+        <span><strong>Inference</strong>Altera Agilex + FPGA AI Suite</span>
+        <span><strong>Docs</strong>proposal/LRDE_AI_Slide_Deck.html</span>
+      </div>
+    </section>
+
+  </div>
+
+  <div class="progress" id="progress"></div>
+  <div class="footer-bar">
+    <div>Altera · AI Compute for LRDE · <span id="slideTitle">Title</span></div>
+    <div>
+      <span class="nav-hint">← → or space · F fullscreen · P print</span>
+      <button class="btn" id="prevBtn" type="button">Prev</button>
+      <button class="btn" id="nextBtn" type="button">Next</button>
+      <span id="counter" style="margin-left:10px;">1 / 16</span>
+    </div>
+  </div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  let i = 0;
+
+  function show(n) {
+    i = (n + slides.length) % slides.length;
+    slides.forEach((s, idx) => s.classList.toggle('active', idx === i));
+    document.getElementById('counter').textContent = `${i + 1} / ${slides.length}`;
+    document.getElementById('slideTitle').textContent = slides[i].dataset.title || '';
+    document.getElementById('progress').style.width = `${((i + 1) / slides.length) * 100}%`;
+    history.replaceState(null, '', `#${i + 1}`);
+  }
+
+  document.getElementById('prevBtn').onclick = () => show(i - 1);
+  document.getElementById('nextBtn').onclick = () => show(i + 1);
+
+  window.addEventListener('keydown', (e) => {
+    if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    if (e.key === 'Home') show(0);
+    if (e.key === 'End') show(slides.length - 1);
+    if (e.key.toLowerCase() === 'f') {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+      else document.exitFullscreen();
+    }
+    if (e.key.toLowerCase() === 'p') window.print();
+  });
+
+  const start = Math.max(0, parseInt(location.hash.replace('#', ''), 10) - 1 || 0);
+  show(start);
+</script>
+</body>
+</html>
