@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Compute Platform Proposal for DRDO | Altera FPGA Inference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #0e1a24;
+    --ink-soft: #3a4a56;
+    --paper: #f7f4ef;
+    --panel: #ffffff;
+    --line: #d5d0c8;
+    --accent: #0b6e4f;
+    --accent-deep: #084c37;
+    --accent-warm: #b45309;
+    --steel: #1c3d5a;
+    --chip: #e8f2ee;
+    --shadow: 0 12px 40px rgba(14, 26, 36, 0.08);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "DM Sans", system-ui, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, rgba(11, 110, 79, 0.12), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(28, 61, 90, 0.10), transparent 55%),
+      linear-gradient(180deg, #efeae2 0%, var(--paper) 28%, #f3f0ea 100%);
+    line-height: 1.55;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  .cover {
+    position: relative;
+    overflow: hidden;
+    border-radius: 4px;
+    background:
+      linear-gradient(135deg, rgba(14,26,36,0.92) 0%, rgba(28,61,90,0.88) 48%, rgba(11,110,79,0.85) 100%),
+      url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    color: #f4f7f5;
+    padding: 48px 44px 40px;
+    box-shadow: var(--shadow);
+    animation: rise 0.8s ease-out both;
+  }
+
+  .cover::after {
+    content: "";
+    position: absolute;
+    right: -80px; bottom: -80px;
+    width: 280px; height: 280px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 50%;
+    animation: spin 40s linear infinite;
+  }
+
+  .eyebrow {
+    display: inline-block;
+    font-size: 12px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 18px;
+  }
+
+  .brand {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: clamp(2.6rem, 6vw, 4.2rem);
+    line-height: 1.05;
+    margin: 0 0 12px;
+    font-weight: 400;
+  }
+
+  .cover h1 {
+    font-size: clamp(1.35rem, 2.6vw, 1.85rem);
+    font-weight: 600;
+    margin: 0 0 16px;
+    max-width: 18ch;
+  }
+
+  .cover p.lead {
+    max-width: 52ch;
+    margin: 0 0 28px;
+    opacity: 0.9;
+    font-size: 1.05rem;
+  }
+
+  .meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px 24px;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    padding-top: 20px;
+    font-size: 0.92rem;
+  }
+  .meta strong { display: block; opacity: 0.65; font-weight: 500; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  nav.toc {
+    margin: 28px 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 20px 24px;
+    box-shadow: var(--shadow);
+    animation: rise 0.8s ease-out 0.1s both;
+  }
+  nav.toc h2 { margin: 0 0 12px; font-size: 0.85rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
+  nav.toc ol { margin: 0; padding-left: 18px; columns: 2; gap: 32px; }
+  nav.toc a { color: var(--steel); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 28px 32px;
+    margin: 18px 0;
+    box-shadow: var(--shadow);
+    animation: rise 0.7s ease-out both;
+  }
+
+  h2 {
+    font-family: "Instrument Serif", Georgia, serif;
+    font-size: 1.85rem;
+    font-weight: 400;
+    margin: 0 0 8px;
+    color: var(--steel);
+  }
+  h3 { margin: 22px 0 8px; font-size: 1.05rem; color: var(--accent-deep); }
+  p { margin: 0 0 12px; color: var(--ink-soft); }
+  .tagline { color: var(--ink); font-size: 1.05rem; margin-bottom: 18px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92rem;
+    margin: 12px 0 8px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    background: #f1eee8;
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  tr:last-child td { border-bottom: none; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }
+  .chip {
+    background: var(--chip);
+    color: var(--accent-deep);
+    border: 1px solid #c5ddd3;
+    padding: 6px 12px;
+    border-radius: 2px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .arch {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    background: #0e1a24;
+    color: #d7e6df;
+    padding: 18px 16px;
+    border-radius: 4px;
+    overflow-x: auto;
+    line-height: 1.45;
+    white-space: pre;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 16px;
+  }
+  .card-lite {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 14px 16px;
+    background: #fbfaf8;
+  }
+  .card-lite h4 { margin: 0 0 6px; font-size: 0.95rem; }
+  .card-lite p { margin: 0; font-size: 0.88rem; }
+
+  .steps {
+    display: grid;
+    gap: 10px;
+    margin: 14px 0;
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 12px;
+    align-items: start;
+  }
+  .num {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--steel);
+    color: white;
+    display: grid; place-items: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+  }
+
+  .cta {
+    background: linear-gradient(120deg, var(--steel), var(--accent-deep));
+    color: white;
+    border: none;
+  }
+  .cta h2, .cta p, .cta li { color: rgba(255,255,255,0.92); }
+  .cta h2 { color: white; }
+  .cta ol { margin: 8px 0 0; padding-left: 20px; }
+  .cta li { margin-bottom: 6px; }
+
+  footer {
+    margin-top: 28px;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    text-align: center;
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 800px) {
+    .cover { padding: 32px 22px; }
+    section { padding: 22px 18px; }
+    nav.toc ol { columns: 1; }
+    .grid-3 { grid-template-columns: 1fr; }
+  }
+
+  @media print {
+    body { background: white; }
+    .cover, section, nav.toc { box-shadow: none; break-inside: avoid; }
+    nav.toc { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="cover">
+      <div class="eyebrow">Technical &amp; Commercial Proposal · Restricted</div>
+      <p class="brand">Altera</p>
+      <h1>AI Compute Platform for DRDO</h1>
+      <p class="lead">Sovereign training infrastructure and edge inference on Altera Agilex™ FPGAs — hardware, software, and a clear path from lab models to fielded systems.</p>
+      <div class="meta">
+        <div><strong>Prepared for</strong>DRDO, Government of India</div>
+        <div><strong>Inference silicon</strong>Agilex™ 3 / 5 / 7 + FPGA AI Suite</div>
+        <div><strong>Scope</strong>Training HW · Software · FPGA Inference</div>
+        <div><strong>Version</strong>1.0 · August 2026</div>
+      </div>
+    </header>
+
+    <nav class="toc">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#exec">Executive summary</a></li>
+        <li><a href="#needs">DRDO needs</a></li>
+        <li><a href="#arch">Architecture</a></li>
+        <li><a href="#train">Training hardware</a></li>
+        <li><a href="#infer">Altera FPGA inference</a></li>
+        <li><a href="#sw">Software stack</a></li>
+        <li><a href="#usecases">Use-case packages</a></li>
+        <li><a href="#security">Security &amp; sovereignty</a></li>
+        <li><a href="#roadmap">Roadmap</a></li>
+        <li><a href="#next">Next steps</a></li>
+      </ol>
+    </nav>
+
+    <section id="exec">
+      <h2>1. Executive summary</h2>
+      <p class="tagline">Train in a secure GPU facility. Deploy everywhere on Altera FPGAs with one conversion toolchain.</p>
+      <div class="chips">
+        <span class="chip">Air-gapped training</span>
+        <span class="chip">OpenVINO → FPGA AI Suite</span>
+        <span class="chip">Deterministic edge latency</span>
+        <span class="chip">Long defence lifecycle</span>
+      </div>
+      <table>
+        <thead><tr><th>Layer</th><th>Recommended approach</th></tr></thead>
+        <tbody>
+          <tr><td>Training</td><td>Secure GPU-accelerated clusters with on-prem MLOps</td></tr>
+          <tr><td>Model optimization</td><td>PyTorch / ONNX → OpenVINO IR → quantization &amp; validation</td></tr>
+          <tr><td>Edge / platform inference</td><td><strong>Altera Agilex FPGAs</strong> with FPGA AI Suite (hostless or SoC)</td></tr>
+          <tr><td>C2 / shelter inference</td><td>Agilex PCIe / SmartNIC cards + optional CPU hetero fallback</td></tr>
+          <tr><td>Software</td><td>Unified stack: frameworks, OpenVINO, FPGA AI Suite, Quartus Prime</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="needs">
+      <h2>2. DRDO needs</h2>
+      <p>DRDO labs need sovereign AI that works on classified data and still fits UAV, EW, naval, and ground SWaP envelopes.</p>
+      <table>
+        <thead><tr><th>Domain</th><th>AI tasks</th><th>Constraint</th></tr></thead>
+        <tbody>
+          <tr><td>ISR / EO-IR</td><td>Detection, tracking, ATR</td><td>Low power, low latency</td></tr>
+          <tr><td>Radar &amp; EW</td><td>Pulse / emitter classification</td><td>Deterministic real-time</td></tr>
+          <tr><td>Autonomy</td><td>Perception &amp; assistive planning</td><td>Safety-critical path</td></tr>
+          <tr><td>C4ISR fusion</td><td>Multi-sensor &amp; decision aids</td><td>Secure facility + forward C2</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="arch">
+      <h2>3. Solution architecture</h2>
+      <div class="arch">SECURE TRAINING FACILITY
+  Data Vault → GPU Training Cluster → Model Registry / MLOps
+                      │ export ONNX / IR
+                      ▼
+MODEL OPTIMIZATION LAB
+  OpenVINO IR → Quantize → FPGA AI Suite (dla_compiler) → Emulate
+                      │
+       ┌──────────────┼──────────────┐
+       ▼              ▼              ▼
+  Agilex 5/3     Hostless       PCIe / SmartNIC
+  SoC edge       Agilex 7/5     Agilex 7 (C2)
+         ALTERA FPGA INFERENCE TIER</div>
+    </section>
+
+    <section id="train">
+      <h2>4. Training hardware</h2>
+      <p>Large-model training remains GPU-centric inside an air-gapped DRDO facility. Inference then moves to Altera FPGAs.</p>
+      <h3>Reference cluster</h3>
+      <table>
+        <thead><tr><th>Component</th><th>Specification (illustrative)</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td>GPU nodes</td><td>8× datacenter GPUs/node, dual-socket CPU, 1–2 TB RAM</td><td>Training &amp; fine-tuning</td></tr>
+          <tr><td>Interconnect</td><td>NVLink in-node; InfiniBand NDR / RoCE fabric</td><td>Distributed training</td></tr>
+          <tr><td>Storage</td><td>Encrypted parallel / object store, 0.5–2 PB</td><td>Datasets &amp; checkpoints</td></tr>
+          <tr><td>Security</td><td>Air gap, bastion MFA, SIEM, optional data diode</td><td>Sovereignty</td></tr>
+        </tbody>
+      </table>
+      <h3>Training software</h3>
+      <p>PyTorch / TensorFlow · DeepSpeed / FSDP · Kubernetes or Slurm · MLflow (self-hosted) · signed containers &amp; SBOM.</p>
+      <div class="steps">
+        <div class="step"><div class="num">1</div><div><strong>Export</strong> ONNX or framework checkpoint from training.</div></div>
+        <div class="step"><div class="num">2</div><div><strong>Convert</strong> with OpenVINO to IR (<code>.xml</code> + <code>.bin</code>).</div></div>
+        <div class="step"><div class="num">3</div><div><strong>Compile</strong> with FPGA AI Suite <code>dla_compiler</code> for target <code>.arch</code>.</div></div>
+        <div class="step"><div class="num">4</div><div><strong>Sign &amp; promote</strong> through Model Registry to field load.</div></div>
+      </div>
+    </section>
+
+    <section id="infer">
+      <h2>5. Inference — Altera FPGAs</h2>
+      <p class="tagline">Agilex devices cover munitions electronics through radar co-processors and C2 accelerators.</p>
+      <table>
+        <thead><tr><th>Device</th><th>INT8 class (illustrative)</th><th>DRDO fit</th></tr></thead>
+        <tbody>
+          <tr><td>Agilex 3</td><td>Up to ~2.6 TOPS</td><td>Smallest SWaP, sensor nodes</td></tr>
+          <tr><td>Agilex 5 E-Series</td><td>Up to ~26 TOPS</td><td>UAV / UGV / EO pods</td></tr>
+          <tr><td>Agilex 5 D-Series</td><td>Up to ~152 TOPS</td><td>High-perf multi-stream edge</td></tr>
+          <tr><td>Agilex 7 I/M-Series</td><td>Up to ~89 TOPS class</td><td>Radar/EW, PCIe, SmartNIC, C2</td></tr>
+        </tbody>
+      </table>
+      <div class="grid-3">
+        <div class="card-lite"><h4>Hostless</h4><p>Minimal DRAM, lowest latency — tightly coupled payloads.</p></div>
+        <div class="card-lite"><h4>SoC + HPS</h4><p>Linux host on-chip with AI IP in fabric — UAV companions.</p></div>
+        <div class="card-lite"><h4>PCIe / OFS</h4><p>Look-aside cards for shelters, ships, and lab racks.</p></div>
+      </div>
+      <h3>FPGA vs GPU at the edge</h3>
+      <table>
+        <thead><tr><th>Criterion</th><th>GPU</th><th>Altera FPGA</th></tr></thead>
+        <tbody>
+          <tr><td>Latency</td><td>Variable</td><td>Deterministic-friendly</td></tr>
+          <tr><td>Power</td><td>High</td><td>Lower W for fixed models</td></tr>
+          <tr><td>Lifecycle</td><td>Short cycles</td><td>Long defence support</td></tr>
+          <tr><td>Sensor I/O</td><td>Host pipeline</td><td>Direct fabric (JESD, Eth, LVDS)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="sw">
+      <h2>6. Software stack</h2>
+      <div class="arch">PyTorch/TF → ONNX → OpenVINO IR → Quantize
+    → FPGA AI Suite dla_compiler + Architecture Optimizer
+    → OpenVINO bit-accurate emulation
+    → Quartus Prime bitstream
+    → Runtime: FPGA or HETERO:FPGA,CPU (or hostless)</div>
+      <table>
+        <thead><tr><th>Component</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td>OpenVINO</td><td>IR conversion &amp; heterogeneous runtime</td></tr>
+          <tr><td>FPGA AI Suite</td><td>AI IP generation, compile, emulation</td></tr>
+          <tr><td>Quartus Prime</td><td>Synthesis, P&amp;R, bitstream</td></tr>
+          <tr><td>OFS (optional)</td><td>Standard PCIe accelerator shell</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="usecases">
+      <h2>7. Use-case packages</h2>
+      <div class="grid-3">
+        <div class="card-lite">
+          <h4>EO/IR ATR on UAV</h4>
+          <p>Agilex 5 SoC · INT8 detector · ≥30 FPS class target · MIPI/CXP ingest.</p>
+        </div>
+        <div class="card-lite">
+          <h4>Radar / EW classifier</h4>
+          <p>Agilex 7 hostless or PCIe · JESD204 path · deterministic windows.</p>
+        </div>
+        <div class="card-lite">
+          <h4>C2 fusion node</h4>
+          <p>Agilex 7 PCIe in rugged server · multi-stream · signed hot-swap.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="security">
+      <h2>8. Security &amp; sovereignty</h2>
+      <table>
+        <thead><tr><th>Control</th><th>Approach</th></tr></thead>
+        <tbody>
+          <tr><td>Data residency</td><td>Training &amp; datasets stay on DRDO premises</td></tr>
+          <tr><td>Air gap</td><td>Isolated cluster; controlled export of IR/bitstreams</td></tr>
+          <tr><td>Bitstream security</td><td>Encryption, authentication, anti-tamper options</td></tr>
+          <tr><td>Indian partners</td><td>SI / DPSU for boards, qualification, ILS</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="roadmap">
+      <h2>9. Implementation roadmap</h2>
+      <table>
+        <thead><tr><th>Phase</th><th>Focus</th><th>Deliverables</th></tr></thead>
+        <tbody>
+          <tr><td>0 Discovery</td><td>4–6 weeks</td><td>Workload survey, SWaP envelopes, KPIs</td></tr>
+          <tr><td>1 PoC</td><td>8–12 weeks</td><td>1–2 models on Agilex kits; accuracy/latency report</td></tr>
+          <tr><td>2 Pilot</td><td>3–6 months</td><td>Rugged prototype + training slice + MLOps</td></tr>
+          <tr><td>3 Scale</td><td>Program-driven</td><td>Production SOM/PCIe, environmental qual, ILS</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="next" class="cta">
+      <h2>10. Next steps</h2>
+      <ol>
+        <li>Nominate DRDO labs for a 2-day architecture workshop.</li>
+        <li>Select two flagship models for Phase-1 PoC on Agilex hardware.</li>
+        <li>Lock SWaP, latency, and accuracy gates.</li>
+        <li>Issue technical SOW + commercial annex for PoC and pilot.</li>
+      </ol>
+    </section>
+
+    <footer>
+      Altera, Agilex, Quartus and the Altera logo are trademarks of Altera Corporation.
+      OpenVINO is a trademark of Intel Corporation. Performance figures are illustrative and configuration-dependent.
+      Full narrative: <code>proposal/DRDO_AI_Proposal.md</code>
+    </footer>
+  </div>
+</body>
+</html>
