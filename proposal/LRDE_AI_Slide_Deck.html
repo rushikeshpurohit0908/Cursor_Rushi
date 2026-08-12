@@ -332,15 +332,46 @@
     .slide { padding: 24px 20px 70px; overflow: auto; }
   }
 
+  @page {
+    size: 13.333in 7.5in;
+    margin: 0;
+  }
+
   @media print {
-    body { overflow: visible; background: white; }
-    .footer-bar, .progress { display: none; }
+    html, body {
+      overflow: visible !important;
+      height: auto !important;
+      width: auto !important;
+      background: white !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .footer-bar, .progress { display: none !important; }
+    .deck {
+      height: auto !important;
+      width: auto !important;
+      position: static !important;
+    }
     .slide {
       display: flex !important;
-      position: relative;
+      position: relative !important;
+      inset: auto !important;
+      width: 13.333in !important;
+      height: 7.5in !important;
+      min-height: 7.5in !important;
+      max-height: 7.5in !important;
+      padding: 0.55in 0.7in 0.55in !important;
+      overflow: hidden !important;
       page-break-after: always;
-      height: 100vh;
-      animation: none;
+      break-after: page;
+      page-break-inside: avoid;
+      break-inside: avoid;
+      animation: none !important;
+      box-shadow: none !important;
+    }
+    .slide:last-child {
+      page-break-after: auto;
+      break-after: auto;
     }
   }
 </style>
