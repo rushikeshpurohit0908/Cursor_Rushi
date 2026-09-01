@@ -1,0 +1,17 @@
++incdir+../rtl
+../rtl/anc_pkg.vh
+../rtl/audio_clock_gen.v
+../rtl/i2s_rx.v
+../rtl/i2s_tx.v
+../rtl/audio_sync_fifo.v
+../rtl/fir_mac_engine.v
+../rtl/secondary_path_fir.v
+../rtl/fxlms_engine.v
+../rtl/spectral_features.v
+../rtl/ai_noise_classifier.v
+../rtl/notch_iir.v
+../rtl/i2c_master.v
+../rtl/codec_init.v
+../rtl/anc_control_regs.v
+../rtl/anc_top.v
+../rtl/anc_board.v

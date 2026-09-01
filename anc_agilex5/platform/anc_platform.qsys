@@ -1,0 +1,27 @@
+# Platform Designer integration notes for anc_top
+#
+# This file documents the Qsys connections; generate the actual .qsys in
+# Quartus Platform Designer GUI.
+#
+# Components:
+#   1. agilex5_hps (Intel Agilex 5 HPS)
+#   2. lwh2f_axi_master (Lightweight HPS-to-FPGA bridge)
+#   3. sys_clk (100 MHz clock source)
+#   4. reset_bridge
+#   5. anc_top (custom component from rtl/anc_top.v)
+#
+# Connections:
+#   sys_clk.clk           → anc_top.sys_clk, anc_top (CSR) clk
+#   reset_bridge.out_reset→ anc_top.reset_n
+#   lwh2f.master          → anc_top.s_axi_* (AXI4-Lite)
+#   anc_top.mclk          → export to top-level pin
+#   anc_top.bclk          → export (or connect to audio_clock_gen output)
+#   anc_top.lrck          → export
+#   anc_top.i2s_adc_data  → export (input)
+#   anc_top.i2s_dac_data  → export (output)
+#
+# Base address for anc_top CSR: 0x0000_0000 within LWH2F window
+# (maps to physical 0x2000_0000 from HPS Linux)
+
+set device_family "Agilex 5"
+set top_module "anc_top"

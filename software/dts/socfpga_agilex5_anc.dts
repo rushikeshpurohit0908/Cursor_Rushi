@@ -1,0 +1,25 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Device-tree overlay for the ANC fabric peripheral on Agilex 5.
+ * Lightweight HPS-to-FPGA window is at 0x2000_0000 (2 MiB).
+ *
+ * Apply on the board:
+ *   dtc -@ -I dts -O dtb -o anc.dtbo socfpga_agilex5_anc.dts
+ *   mkdir -p /sys/kernel/config/device-tree/overlays/anc
+ *   cat anc.dtbo > /sys/kernel/config/device-tree/overlays/anc/dtbo
+ */
+
+/ {
+    fragment@0 {
+        target-path = "/soc";
+        __overlay__ {
+            anc_csr: anc@20000000 {
+                compatible = "altr,anc-fxlms-1.0";
+                reg = <0x20000000 0x00001000>;
+                status = "okay";
+            };
+        };
+    };
+};
