@@ -88,6 +88,34 @@ Before enabling adaptation:
 
 4. Write Ŝ coefficients to BRAM via `SECONDARY_PATH_BASE` register window.
 
+## Operating without an error microphone
+
+Set `MODE` to **FF_FROZEN** or **FF_VIRTUAL**:
+
+```bash
+# Pretrained filter, single reference mic
+python -m anc_control.anc_tuner --mode ff-frozen --no-dry-run --monitor
+
+# Internal-model adaptation (load P̂ ≈ Ŝ first)
+python -m anc_control.load_coeffs --secondary S.hex --primary P.hex --no-dry-run
+python -m anc_control.anc_tuner --mode ff-virtual --no-dry-run --monitor
+```
+
+In `FF_FROZEN` the adaptive FIR is a static filter (load `w` offline). In
+`FF_VIRTUAL` the fabric estimates ê = P̂·x + Ŝ·y so LMS can still run.
+
+## SSM2518 / WM8960 I2C
+
+Fabric I2C master (100 kHz, open-drain) programs the codec from ROM
+(`rtl/codec_init.v`) when `CONTROL.codec_init` is pulsed, or from HPS:
+
+```bash
+python -m anc_control.anc_tuner --codec ssm2518 --no-dry-run
+```
+
+Tables match `software/anc_control/codecs.py`. Pmod I2S2 needs no I2C
+(`CODEC_SEL=2`).
+
 ## Bring-up checklist
 
 - [ ] `sys_clk` toggles; LEDs heartbeat in BTS

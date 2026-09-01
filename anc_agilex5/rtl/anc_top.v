@@ -1,30 +1,27 @@
 // anc_top.v
-// Top-level ANC system integrating audio I/O, FxLMS engine, AI classifier,
-// and HPS-facing control registers for Agilex 5 SoC FPGA fabric.
+// Fabric integrator: clocks, I2S, CDC, FxLMS, AI, notch, AXI CSR.
 
 `timescale 1ns / 1ps
 
 module anc_top #(
-    parameter FILTER_TAPS    = 256,
-    parameter SECONDARY_TAPS = 128,
-    parameter DATA_WIDTH     = 24,
-    parameter INTERNAL_WIDTH = 32,
-    parameter TDM_SLOTS      = 2
+    parameter FILTER_TAPS     = 256,
+    parameter SECONDARY_TAPS  = 128,
+    parameter DATA_WIDTH      = 24,
+    parameter INTERNAL_WIDTH  = 32,
+    parameter TDM_SLOTS       = 2,
+    parameter GENERATE_CLOCKS = 1
 ) (
-    // System clock / reset (100 MHz domain)
     input  wire sys_clk,
     input  wire reset_n,
 
-    // I2S clock domain (from audio_clock_gen, also driven to pins)
-    input  wire bclk,
-    input  wire lrck,
+    input  wire bclk_in,
+    input  wire lrck_in,
     input  wire i2s_adc_data,
     output wire i2s_dac_data,
-
-    // Master clocks driven to external codec
     output wire mclk,
+    output wire bclk_out,
+    output wire lrck_out,
 
-    // AXI4-Lite slave (connect to LWH2F bridge in Platform Designer)
     input  wire        s_axi_awvalid,
     output wire        s_axi_awready,
     input  wire [7:0]  s_axi_awaddr,
@@ -39,24 +36,36 @@ module anc_top #(
     input  wire        s_axi_rready,
     output wire [31:0] s_axi_rdata,
 
-    // Debug / status LEDs
+    output wire        codec_init_pulse,
+    output wire        i2c_user_start,
+    output wire [6:0]  i2c_user_addr,
+    output wire [7:0]  i2c_user_reg,
+    output wire [7:0]  i2c_user_data,
+    input  wire        codec_ready,
+    input  wire        i2c_busy,
+
     output wire anc_active_led,
     output wire clip_led
 );
 
-    // --- Audio clock generation ---
-    wire sample_tick;
+    wire gen_mclk, gen_bclk, gen_lrck, sample_tick;
 
     audio_clock_gen u_clocks (
         .sys_clk(sys_clk),
         .reset_n(reset_n),
-        .mclk(mclk),
-        .bclk(),       // bclk driven externally from same gen in full integration
-        .lrck(),
+        .mclk(gen_mclk),
+        .bclk(gen_bclk),
+        .lrck(gen_lrck),
         .sample_tick(sample_tick)
     );
 
-    // --- I2S RX (reference + error mics) ---
+    wire bclk = GENERATE_CLOCKS ? gen_bclk : bclk_in;
+    wire lrck = GENERATE_CLOCKS ? gen_lrck : lrck_in;
+
+    assign mclk     = gen_mclk;
+    assign bclk_out = gen_bclk;
+    assign lrck_out = gen_lrck;
+
     wire                       i2s_rx_valid;
     wire signed [DATA_WIDTH-1:0] rx_slot [0:TDM_SLOTS-1];
 
@@ -72,12 +81,11 @@ module anc_top #(
         .slot_data(rx_slot)
     );
 
-    // Sign-extend 24-bit samples to internal 32-bit Q1.31
-    wire signed [INTERNAL_WIDTH-1:0] ref_sample  = {{8{rx_slot[0][DATA_WIDTH-1]}}, rx_slot[0]};
-    wire signed [INTERNAL_WIDTH-1:0] error_sample = {{8{rx_slot[1][DATA_WIDTH-1]}}, rx_slot[1]};
+    wire signed [INTERNAL_WIDTH-1:0] ref_sample =
+        {{8{rx_slot[0][DATA_WIDTH-1]}}, rx_slot[0]};
+    wire signed [INTERNAL_WIDTH-1:0] error_sample =
+        {{8{rx_slot[1][DATA_WIDTH-1]}}, rx_slot[1]};
 
-    // --- CDC: I2S domain → sys_clk domain ---
-    wire fifo_wr_en = i2s_rx_valid;
     wire fifo_rd_en;
     wire fifo_empty;
     wire [INTERNAL_WIDTH*2-1:0] fifo_rd_data;
@@ -89,7 +97,7 @@ module anc_top #(
         .wr_clk(bclk),
         .rd_clk(sys_clk),
         .reset_n(reset_n),
-        .wr_en(fifo_wr_en),
+        .wr_en(i2s_rx_valid),
         .wr_data({ref_sample, error_sample}),
         .wr_full(),
         .rd_en(fifo_rd_en),
@@ -99,33 +107,31 @@ module anc_top #(
 
     wire signed [INTERNAL_WIDTH-1:0] sys_ref_sample   = fifo_rd_data[INTERNAL_WIDTH*2-1:INTERNAL_WIDTH];
     wire signed [INTERNAL_WIDTH-1:0] sys_error_sample = fifo_rd_data[INTERNAL_WIDTH-1:0];
-    wire sys_valid;
 
     reg rd_pending;
     always @(posedge sys_clk or negedge reset_n) begin
         if (!reset_n)
             rd_pending <= 0;
-        else if (!fifo_empty && !rd_pending) begin
+        else if (!fifo_empty && !rd_pending)
             rd_pending <= 1;
-        end else if (rd_pending) begin
+        else if (rd_pending)
             rd_pending <= 0;
-        end
     end
 
     assign fifo_rd_en = !fifo_empty && !rd_pending;
-    assign sys_valid  = rd_pending;
+    wire sys_valid = rd_pending;
 
-    // --- Control registers ---
-    wire anc_enable, anc_bypass, reset_adapt;
-    wire [15:0] mu, output_gain;
+    wire anc_enable, anc_bypass, reset_adapt, notch_en;
+    wire [15:0] mu, output_gain, leak;
+    wire [1:0] mode;
     wire [1:0] ai_override_class;
     wire ai_override_en;
-    wire coeff_wr_en, sec_wr_en;
+    wire [15:0] notch_b0, notch_b1, notch_b2, notch_a1, notch_a2;
+    wire coeff_wr_en, sec_wr_en, prim_wr_en;
     wire [7:0] coeff_wr_addr;
     wire [31:0] coeff_wr_data;
-    wire [6:0] sec_wr_addr;
-    wire [31:0] sec_wr_data;
-
+    wire [6:0] sec_wr_addr, prim_wr_addr;
+    wire [31:0] sec_wr_data, prim_wr_data;
     wire status_running, status_clip;
     wire [1:0] status_ai_class;
     wire [31:0] status_sample_count;
@@ -149,23 +155,40 @@ module anc_top #(
         .anc_enable(anc_enable),
         .anc_bypass(anc_bypass),
         .reset_adapt(reset_adapt),
+        .codec_init_pulse(codec_init_pulse),
+        .notch_en(notch_en),
         .mu(mu),
         .output_gain(output_gain),
+        .leak(leak),
+        .mode(mode),
         .ai_override_class(ai_override_class),
         .ai_override_en(ai_override_en),
+        .notch_b0(notch_b0),
+        .notch_b1(notch_b1),
+        .notch_b2(notch_b2),
+        .notch_a1(notch_a1),
+        .notch_a2(notch_a2),
         .coeff_wr_en(coeff_wr_en),
         .coeff_wr_addr(coeff_wr_addr),
         .coeff_wr_data(coeff_wr_data),
         .sec_wr_en(sec_wr_en),
         .sec_wr_addr(sec_wr_addr),
         .sec_wr_data(sec_wr_data),
+        .prim_wr_en(prim_wr_en),
+        .prim_wr_addr(prim_wr_addr),
+        .prim_wr_data(prim_wr_data),
+        .i2c_user_start(i2c_user_start),
+        .i2c_user_addr(i2c_user_addr),
+        .i2c_user_reg(i2c_user_reg),
+        .i2c_user_data(i2c_user_data),
         .status_running(status_running),
         .status_clip(status_clip),
         .status_ai_class(status_ai_class),
-        .status_sample_count(status_sample_count)
+        .status_sample_count(status_sample_count),
+        .status_codec_ready(codec_ready),
+        .status_i2c_busy(i2c_busy)
     );
 
-    // --- AI noise classifier ---
     wire feature_valid;
     wire [15:0] band_energy [0:7];
     wire [1:0] noise_class;
@@ -194,7 +217,25 @@ module anc_top #(
         .classifier_done()
     );
 
-    // --- FxLMS ANC engine ---
+    wire notch_valid;
+    wire signed [INTERNAL_WIDTH-1:0] notch_out;
+    wire tonal_notch = notch_en || (noise_class == 2'd0);
+
+    notch_iir #(.DATA_WIDTH(INTERNAL_WIDTH)) u_notch (
+        .clk(sys_clk),
+        .reset_n(reset_n),
+        .enable(tonal_notch),
+        .valid_in(sys_valid),
+        .x_in(sys_ref_sample),
+        .b0(notch_b0),
+        .b1(notch_b1),
+        .b2(notch_b2),
+        .a1(notch_a1),
+        .a2(notch_a2),
+        .valid_out(notch_valid),
+        .y_out(notch_out)
+    );
+
     wire anc_valid_out;
     wire signed [INTERNAL_WIDTH-1:0] anti_noise;
 
@@ -210,8 +251,10 @@ module anc_top #(
         .bypass(anc_bypass),
         .reset_adapt(reset_adapt),
         .freeze_adapt(freeze_adapt),
+        .mode(mode),
         .mu(mu),
         .mu_scale(mu_scale),
+        .leak(leak),
         .valid_in(sys_valid),
         .ref_sample(sys_ref_sample),
         .error_sample(sys_error_sample),
@@ -222,25 +265,26 @@ module anc_top #(
         .coeff_wr_en(coeff_wr_en),
         .coeff_wr_addr(coeff_wr_addr),
         .coeff_wr_data(coeff_wr_data),
-        .coeff_rd_addr(8'd0),
+        .coeff_rd_addr({8{1'b0}}),
         .coeff_rd_data(),
         .sec_wr_en(sec_wr_en),
         .sec_wr_addr(sec_wr_addr),
-        .sec_wr_data(sec_wr_data)
+        .sec_wr_data(sec_wr_data),
+        .prim_wr_en(prim_wr_en),
+        .prim_wr_addr(prim_wr_addr),
+        .prim_wr_data(prim_wr_data)
     );
 
     assign status_running  = anc_enable && !anc_bypass;
     assign status_ai_class = noise_class;
 
-    // --- Output gain + clip to 24-bit ---
-    wire signed [INTERNAL_WIDTH-1:0] gained = (anti_noise * $signed({1'b0, output_gain})) >>> 15;
+    wire signed [INTERNAL_WIDTH-1:0] mix = anti_noise + (tonal_notch ? (notch_out >>> 3) : 0);
+    wire signed [INTERNAL_WIDTH-1:0] gained = (mix * $signed({1'b0, output_gain})) >>> 15;
     wire signed [DATA_WIDTH-1:0] dac_left = gained[INTERNAL_WIDTH-1:INTERNAL_WIDTH-DATA_WIDTH];
 
-    // --- CDC: sys_clk → I2S TX domain ---
-    wire tx_fifo_wr = anc_valid_out;
-    wire tx_fifo_rd;
     wire tx_fifo_empty;
     wire [DATA_WIDTH-1:0] tx_fifo_data;
+    wire tx_fifo_rd;
 
     audio_sync_fifo #(
         .DATA_WIDTH(DATA_WIDTH),
@@ -249,7 +293,7 @@ module anc_top #(
         .wr_clk(sys_clk),
         .rd_clk(bclk),
         .reset_n(reset_n),
-        .wr_en(tx_fifo_wr),
+        .wr_en(anc_valid_out),
         .wr_data(dac_left[DATA_WIDTH-1:0]),
         .wr_full(),
         .rd_en(tx_fifo_rd),
@@ -257,9 +301,7 @@ module anc_top #(
         .rd_empty(tx_fifo_empty)
     );
 
-    wire tx_valid;
     reg tx_rd_pending;
-
     always @(posedge bclk or negedge reset_n) begin
         if (!reset_n)
             tx_rd_pending <= 0;
@@ -270,11 +312,10 @@ module anc_top #(
     end
 
     assign tx_fifo_rd = !tx_fifo_empty && !tx_rd_pending;
-    assign tx_valid   = tx_rd_pending;
 
     wire signed [DATA_WIDTH-1:0] tx_slot [0:TDM_SLOTS-1];
     assign tx_slot[0] = tx_fifo_data;
-    assign tx_slot[1] = rx_slot[1];  // monitor mix: pass error mic to right channel
+    assign tx_slot[1] = rx_slot[1];
 
     i2s_tx #(
         .DATA_WIDTH(DATA_WIDTH),
@@ -283,7 +324,7 @@ module anc_top #(
         .bclk(bclk),
         .lrck(lrck),
         .reset_n(reset_n),
-        .sample_valid(tx_valid),
+        .sample_valid(tx_rd_pending),
         .slot_data(tx_slot),
         .sdout(i2s_dac_data)
     );

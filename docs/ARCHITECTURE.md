@@ -50,8 +50,12 @@ headphones or a speaker in real time.
 | FxLMS engine | `rtl/fxlms_engine.v` | Adaptive filter + secondary-path model + LMS update |
 | FIR MAC | `rtl/fir_mac_engine.v` | Time-multiplexed dot-product for filter taps |
 | AI classifier | `rtl/ai_noise_classifier.v` | Band-energy MLP → noise class → step-size scaling |
-| Control regs | `rtl/anc_control_regs.v` | AXI4-Lite CSR (bypass, mu, thresholds, status) |
-| Top | `rtl/anc_top.v` | Integrates audio, DSP, AI, and HPS-facing CSR |
+| Control regs | `rtl/anc_control_regs.v` | AXI4-Lite CSR (mode, mu, leak, coeff ports, I2C) |
+| Notch assist | `rtl/notch_iir.v` | Biquad notch for tonal class |
+| I2C master | `rtl/i2c_master.v` | 100 kHz write-only master for codec programming |
+| Codec init | `rtl/codec_init.v` | SSM2518 / WM8960 register ROM |
+| Fabric top | `rtl/anc_top.v` | Clocks, I2S, CDC, DSP, AI, CSR |
+| Board top | `rtl/anc_board.v` | Pin-level wrapper + I2C + LEDs |
 
 ## Algorithm: Filtered-x LMS
 
@@ -65,10 +69,18 @@ mic):
 3. The **secondary-path model** `Ŝ` (128-tap FIR, trained offline or loaded from
    HPS) filters `x(n)` to produce `x̂(n)` — the predicted signal at the error
    microphone if the adaptive filter were ideal.
-4. The **error** signal `e(n)` comes from the error microphone (or is forced to
-   zero in feedforward-only mode).
-5. **Coefficient update** (one tap per clock cycle, round-robin):
-   `w_i ← w_i + μ · e(n) · x̂_i(n)`
+4. The **error** signal depends on operating mode (see below).
+5. **Coefficient update** (one tap per clock, leaky LMS):
+   `w_i ← (1−λ) w_i + μ · e(n) · x̂_i(n)`
+
+### Operating modes (`MODE` register)
+
+| Mode | Value | Error source | Adaptation | Typical use |
+| --- | --- | --- | --- | --- |
+| **HYBRID** | 0 | Error microphone | On | Headphones / dual-mic |
+| **FF_FROZEN** | 1 | None | Off (use loaded `w`) | Single reference mic, pretrained filter |
+| **FF_VIRTUAL** | 2 | ê = P̂·x + Ŝ·y | On | No error mic; internal-model / virtual microphone |
+| **CALIB** | 3 | — | Off, passthrough | Secondary-path identification (play sweep) |
 
 Convergence time depends on `μ`, filter length, and secondary-path accuracy.
 The AI block adjusts `μ` dynamically based on detected noise class.
@@ -111,20 +123,28 @@ carrier board).
 
 ## HPS ↔ FPGA control
 
-Register map (AXI4-Lite, base `0x2000_0000` on LWH2F bridge):
+Register map (AXI4-Lite, base `0x2000_0000` on LWH2F). Shared header:
+`rtl/anc_pkg.vh`, `software/baremetal/anc_regs.h`, `software/anc_control/fpga_bridge.py`.
 
 | Offset | Register | R/W | Description |
 | --- | --- | --- | --- |
-| 0x00 | CONTROL | W | bit0=enable, bit1=bypass, bit2=reset_adapt |
-| 0x04 | STATUS | R | bit0=running, bit1=clip, bits[7:4]=AI class |
+| 0x00 | CONTROL | RW | bit0=enable, bit1=bypass, bit2=reset_adapt, bit3=codec_init, bit4=notch_en |
+| 0x04 | STATUS | R | bit0=running, bit1=clip, bits[5:4]=AI class, bit8=codec_ready, bit9=i2c_busy |
 | 0x08 | MU | RW | LMS step size (Q0.16) |
-| 0x0C | SECONDARY_PATH_BASE | RW | BRAM port for Ŝ coefficients |
-| 0x10 | ADAPTIVE_W_BASE | RW | BRAM port for w coefficients |
+| 0x0C | MEM_ADDR | W | Coefficient address for next MEM_DATA write |
+| 0x10 | MEM_DATA | W | Coefficient value (triggers write to selected memory) |
 | 0x14 | SAMPLE_COUNT | R | Monotonic processed-sample counter |
-| 0x18 | AI_OVERRIDE | RW | Force noise class (0=auto) |
+| 0x18 | AI_OVERRIDE | RW | bit31=force, bits[1:0]=class |
 | 0x1C | OUTPUT_GAIN | RW | Q1.15 output gain |
+| 0x20 | MEM_SEL | W | 0=Ŝ secondary, 1=w adaptive, 2=P̂ primary |
+| 0x24 | LEAK | RW | Leaky-LMS λ (Q0.16) |
+| 0x28 | MODE | RW | 0=hybrid, 1=ff_frozen, 2=ff_virtual, 3=calib |
+| 0x2C | I2C_CTRL | W | bits[6:0]=slave address |
+| 0x30 | I2C_DATA | W | bits[15:8]=reg, bits[7:0]=data (triggers I2C write) |
+| 0x34 | NOTCH_FREQ | W | Packed b0/b1 for tonal notch |
+| 0x3C | VERSION | R | `0x00020000` (full design) |
 
-Python helpers live in `software/anc_control/`.
+Python helpers live in `software/anc_control/`. C accessors in `software/baremetal/`.
 
 ## Latency budget
 
@@ -141,20 +161,25 @@ Well within the ~1 ms acoustic latency budget for headphone ANC.
 
 | Resource | Estimate |
 | --- | --- |
-| ALMs | ~4,500 |
-| M20K | ~32 |
-| DSP (FP mode) | ~48 |
-| Fmax (fabric) | >200 MHz with 100 MHz audio clock |
+| ALMs | ~8,000 (three 128-tap path FIRs + 256-tap adaptive + I2C) |
+| M20K | ~48 |
+| DSP | ~80 |
+| Fmax (fabric) | >200 MHz with 100 MHz sys_clk |
 
 ## Directory layout
 
 ```
 anc_agilex5/
-├── rtl/                  SystemVerilog/Verilog sources
-├── tb/                   Simulation testbenches
-├── constraints/          Quartus pin/timing templates
-├── software/anc_control/ HPS Python control utilities
-└── docs/                 This file + board integration guide
+├── rtl/           Verilog (I2S, FxLMS, AI, I2C, board top)
+├── tb/            Testbenches + filelist + Makefile
+├── constraints/   Pin template
+├── quartus/       .qpf / .qsf / .sdc
+└── platform/      Platform Designer _hw.tcl + generate script
+software/anc_control/   Python CSR, codecs, golden FxLMS
+software/baremetal/     C register header + demo
+software/dts/           Device-tree overlay
+docs/
+tests/
 ```
 
 ## References

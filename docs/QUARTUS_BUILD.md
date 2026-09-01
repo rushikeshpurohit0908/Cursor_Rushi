@@ -1,71 +1,78 @@
-# Quartus Build Guide — ANC Agilex 5
+# Quartus Build Guide — ANC Agilex 5 (full design)
 
 ## Prerequisites
 
-- **Quartus Prime Pro** 24.3 or later (Agilex 5 support)
-- Agilex 5 E-Series device support files installed
+- **Quartus Prime Pro** 24.3 or later with Agilex 5 device support
 - Platform Designer (included)
 
-## Quick start
+## Project files
+
+| File | Role |
+| --- | --- |
+| `anc_agilex5/quartus/anc_agilex5.qpf` | Quartus project |
+| `anc_agilex5/quartus/anc_agilex5.qsf` | Device, RTL list, pin assignments |
+| `anc_agilex5/quartus/anc_agilex5.sdc` | Timing |
+| `anc_agilex5/platform/anc_board_hw.tcl` | Custom Qsys component |
+| `anc_agilex5/platform/anc_platform.tcl` | Generate `anc_platform.qsys` |
+
+## Compile
 
 ```bash
-# 1. Create project (from Quartus GUI or CLI)
-quartus_sh --flow compile anc_agilex5/quartus/anc_agilex5.qpf
-
-# 2. Program device
-quartus_pgm -c 1 -m jtag -o "p;anc_agilex5/quartus/output_files/anc_agilex5.sof"
+cd anc_agilex5/quartus
+quartus_sh --flow compile anc_agilex5.qpf
+quartus_pgm -c 1 -m jtag -o "p;output_files/anc_agilex5.sof"
 ```
 
-## Adding RTL to Platform Designer
+## Platform Designer
 
-1. **Tools → Platform Designer** → open or create `anc_platform.qsys`.
-2. Add **New Component** → import `anc_agilex5/rtl/anc_top.v` and supporting files.
-3. Expose interfaces:
-   - `axi4lite_ctrl` — connect to LWH2F master
-   - `i2s_adc` / `i2s_dac` — export to top-level pins
-   - `clk`, `reset_n` — connect to system clock bridge
-4. Generate HDL; add generated `.qsys` to Quartus project.
-5. Merge `constraints/anc_pins.qsf` into project QSF.
+```bash
+cd anc_agilex5/platform
+qsys-script --script=anc_platform.tcl --quartus-project=../quartus/anc_agilex5.qpf
+```
 
-## Simulation (ModelSim / Questa / Verilator)
+Then in the GUI:
+
+1. Add **Agilex 5 HPS** IP (name varies by Quartus version).
+2. Connect `lwh2f_axi_master` → `anc.s_axi` at offset `0x0`.
+3. Export `audio` (I2S + I2C) and `leds` conduits to the board top.
+4. Generate HDL; add the `.qsys` to the Quartus project.
+
+`CODEC_SEL` on `anc_board`: `0` = SSM2518, `1` = WM8960, `2` = Pmod I2S2 (no I2C).
+
+## Simulation
 
 ```bash
 cd anc_agilex5/tb
-# ModelSim
-vlog ../rtl/*.v tb_fxlms_engine.v
-vsim -c tb_fxlms_engine -do "run -all; quit"
-
-# Icarus Verilog (open-source)
-iverilog -o sim ../rtl/*.v tb/tb_fxlms_engine.v && vvp sim
+make fxlms    # FxLMS engine
+make i2s      # I2S loopback
+make i2c      # SSM2518 init over I2C master
 ```
 
-## Key generics / parameters
+Requires Icarus Verilog (`iverilog` / `vvp`). File list: `tb/filelist.f`.
 
-| Parameter | Default | Location | Description |
+## Parameters
+
+| Parameter | Default | File | Description |
 | --- | --- | --- | --- |
 | `FILTER_TAPS` | 256 | `fxlms_engine.v` | Adaptive FIR length |
-| `SECONDARY_TAPS` | 128 | `fxlms_engine.v` | Secondary-path model length |
-| `SAMPLE_RATE` | 48000 | `audio_clock_gen.v` | Audio sample rate (Hz) |
-| `DATA_WIDTH` | 24 | `i2s_rx.v` | I2S sample width |
-| `INTERNAL_WIDTH` | 32 | `fxlms_engine.v` | Fixed-point internal width (Q1.31) |
-| `TDM_SLOTS` | 2 | `i2s_rx.v` | Number of TDM slots per frame |
+| `SECONDARY_TAPS` | 128 | `fxlms_engine.v` | Ŝ / P̂ length |
+| `CODEC_SEL` | 0 | `anc_board.v` | Codec init ROM |
+| `GENERATE_CLOCKS` | 1 | `anc_top.v` | Internal MCLK/BCLK/LRCK |
 
-## Timing constraints (excerpt)
+## Device-tree overlay (HPS Linux)
 
-See `constraints/anc_pins.qsf` for full pin assignments. Core SDC:
-
-```tcl
-create_clock -name sys_clk -period 10.0 [get_ports sys_clk]
-set_clock_groups -asynchronous -group [get_clocks sys_clk] -group [get_clocks mclk]
-set_false_path -from [get_ports i2s_adc_data]
+```bash
+dtc -@ -I dts -O dtb -o anc.dtbo software/dts/socfpga_agilex5_anc.dts
+mkdir -p /sys/kernel/config/device-tree/overlays/anc
+cat anc.dtbo > /sys/kernel/config/device-tree/overlays/anc/dtbo
 ```
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| No audio output | Wrong pin assignment / codec not powered | Check QSF, scope BCLK/LRCK |
-| Hiss / clipping | Gain too high | Reduce `OUTPUT_GAIN` CSR |
-| No convergence | Bad secondary-path model | Re-run calibration |
-| `STATUS.clip` set | ADC saturation | Lower mic preamp gain |
-| Timing failures in DSP | Filter too long at high Fmax | Reduce `FILTER_TAPS` or lower sys_clk |
+| No audio | Pins / codec power / I2C | Scope BCLK/LRCK; `STATUS.codec_ready` |
+| Hiss / clip | Gain too high | Lower `OUTPUT_GAIN` |
+| No convergence | Bad Ŝ or wrong mode | Recalibrate; use HYBRID with error mic |
+| Feedforward does nothing | Empty `w` | Load pretrained weights or use `FF_VIRTUAL` |
+| Timing fail | Long FIR at high Fmax | Reduce `FILTER_TAPS` |

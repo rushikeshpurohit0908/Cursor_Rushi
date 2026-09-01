@@ -1,5 +1,5 @@
-# Pin and timing constraints template for Agilex 5 E-Series 065B + Pmod I2S2
-# Merge into your Quartus .qsf project file.
+# Pin template (legacy). Authoritative assignments live in
+# anc_agilex5/quartus/anc_agilex5.qsf — copy from there.
 
 # System clock (100 MHz on-board oscillator)
 set_location_assignment PIN_AJ27 -to sys_clk

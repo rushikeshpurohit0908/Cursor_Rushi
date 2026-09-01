@@ -21,13 +21,14 @@ def load_hex(path: Path) -> list[int]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Load FIR coefficients to FPGA")
-    parser.add_argument("--secondary", type=Path, help="Secondary-path .hex file")
-    parser.add_argument("--adaptive", type=Path, help="Adaptive weights .hex file")
+    parser.add_argument("--secondary", type=Path, help="Secondary-path .hex")
+    parser.add_argument("--primary", type=Path, help="Primary-path .hex (virtual error)")
+    parser.add_argument("--adaptive", type=Path, help="Adaptive weights .hex")
     parser.add_argument("--no-dry-run", action="store_true")
     args = parser.parse_args()
 
-    if not args.secondary and not args.adaptive:
-        parser.error("Provide --secondary and/or --adaptive")
+    if not any([args.secondary, args.primary, args.adaptive]):
+        parser.error("Provide --secondary, --primary, and/or --adaptive")
 
     with AncFpgaBridge(dry_run=not args.no_dry_run) as bridge:
         bridge.bypass(True)
@@ -35,6 +36,10 @@ def main() -> int:
             coeffs = load_hex(args.secondary)
             bridge.load_secondary_path(coeffs)
             print(f"Loaded {len(coeffs)} secondary-path coefficients")
+        if args.primary:
+            coeffs = load_hex(args.primary)
+            bridge.load_primary_path(coeffs)
+            print(f"Loaded {len(coeffs)} primary-path coefficients")
         if args.adaptive:
             coeffs = load_hex(args.adaptive)
             bridge.load_adaptive_weights(coeffs)

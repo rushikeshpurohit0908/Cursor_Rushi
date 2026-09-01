@@ -38,6 +38,8 @@ module tb_fxlms_engine;
         .freeze_adapt(freeze_adapt),
         .mu(mu),
         .mu_scale(mu_scale),
+        .leak(16'h0008),
+        .mode(2'd0),
         .valid_in(valid_in),
         .ref_sample(ref_sample),
         .error_sample(error_sample),
@@ -52,7 +54,10 @@ module tb_fxlms_engine;
         .coeff_rd_data(),
         .sec_wr_en(0),
         .sec_wr_addr(0),
-        .sec_wr_data(0)
+        .sec_wr_data(0),
+        .prim_wr_en(0),
+        .prim_wr_addr(0),
+        .prim_wr_data(0)
     );
 
     initial clk = 0;

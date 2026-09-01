@@ -1,76 +1,70 @@
 # Real-Time ANC on Intel Agilex 5 FPGA
 
-Active Noise Cancellation reference design for the **Intel/Altera Agilex 5 SoC
-FPGA**, with microphone input, headphone/speaker output, **FxLMS adaptive DSP**,
-and an on-fabric **AI noise classifier**.
+Full Active Noise Cancellation design for the **Intel/Altera Agilex 5 SoC FPGA**:
+microphone → FxLMS (hybrid / feedforward) → headphone/speaker, plus on-fabric
+AI classification and I2C codec bring-up.
 
 ## Features
 
-- **Real-time audio I/O** — soft I2S master (48 kHz, 24-bit) for external codecs
-  (CS5343/CS4344, SSM2518, WM8960)
-- **FxLMS ANC engine** — 256-tap adaptive FIR + 128-tap secondary-path model
-- **AI processing** — 8-band Goertzel features + quantized MLP classifies noise
-  (tonal / broadband / transient) and adjusts LMS step size
-- **HPS control** — Python utilities for enable/bypass, coefficient loading,
-  secondary-path calibration, and status monitoring via LWH2F register map
-- **Low latency** — ~3.8 µs end-to-end at 100 MHz fabric clock
+- **Real-time I2S** — 48 kHz / 24-bit soft master (Agilex 5 has no hard I2S)
+- **FxLMS engine** — 256-tap adaptive FIR, 128-tap Ŝ and P̂, leaky LMS
+- **Four modes** — hybrid (error mic), feedforward-frozen, feedforward-virtual, calib
+- **AI classifier** — 8-band Goertzel + quantized MLP (tonal / broadband / transient)
+- **Tonal notch** — biquad assist when AI reports tonal noise
+- **Codec I2C** — SSM2518 and WM8960 init ROM; Pmod I2S2 needs no I2C
+- **Quartus + Qsys** — project, SDC, `_hw.tcl`, platform generate script
+- **HPS software** — Python CSR/tuner, C header + demo, device-tree overlay
+- **~3.8 µs** fabric latency at 100 MHz
 
 ## Quick start
+
+### Software tests (no FPGA)
+
+```bash
+python3 -m pytest tests/ -v
+python -m anc_control.anc_tuner --mode ff-virtual --codec ssm2518 --monitor
+```
 
 ### Simulation
 
 ```bash
-cd anc_agilex5/tb
-iverilog -o sim ../rtl/fxlms_engine.v ../rtl/secondary_path_fir.v tb_fxlms_engine.v
-vvp sim
+cd anc_agilex5/tb && make fxlms && make i2s
 ```
 
-### HPS software (dry-run, no hardware)
+### On-board
 
-```bash
-pip install pytest
-pytest tests/
-python -m anc_control.anc_tuner --monitor
-```
-
-### On-board bring-up
-
-1. Wire audio codec per [docs/BOARD_INTEGRATION.md](docs/BOARD_INTEGRATION.md)
-2. Build bitstream per [docs/QUARTUS_BUILD.md](docs/QUARTUS_BUILD.md)
-3. Calibrate secondary path:
+1. Wire codec — [docs/BOARD_INTEGRATION.md](docs/BOARD_INTEGRATION.md)
+2. Build — [docs/QUARTUS_BUILD.md](docs/QUARTUS_BUILD.md)
+3. Hybrid (ref + error mic):
    ```bash
    python -m anc_control.calibrate_secondary --impulse sweep.wav --response error.wav
    python -m anc_control.load_coeffs --secondary secondary_path_coeffs.hex --no-dry-run
+   python -m anc_control.anc_tuner --mode hybrid --codec ssm2518 --no-dry-run --monitor
    ```
-4. Enable ANC:
+4. Feedforward only (no error mic):
    ```bash
-   python -m anc_control.anc_tuner --no-dry-run --monitor
+   python -m anc_control.load_coeffs --adaptive w.hex --no-dry-run
+   python -m anc_control.anc_tuner --mode ff-frozen --no-dry-run --monitor
    ```
 
 ## Architecture
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for signal flow, algorithm
-details, register map, and resource estimates.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — signal flow, modes, register map.
 
-## Directory layout
+## Layout
 
 ```
-anc_agilex5/
-├── rtl/           Verilog sources (I2S, FxLMS, AI classifier, top)
-├── tb/            Simulation testbenches
-├── constraints/   Quartus pin/timing templates
-└── platform/      Platform Designer integration notes
-software/anc_control/   HPS Python control utilities
-docs/                     Architecture and integration guides
-tests/                      Software unit tests
+anc_agilex5/rtl/          Verilog (board top = anc_board.v)
+anc_agilex5/quartus/      Quartus Prime Pro 24.3 project
+anc_agilex5/platform/     Platform Designer component + generate TCL
+anc_agilex5/tb/           Icarus testbenches
+software/anc_control/     Python control + golden FxLMS
+software/baremetal/       C registers + demo
+software/dts/             Device-tree overlay
 ```
 
-## Target hardware
+## Target
 
-- **Primary:** Agilex 5 E-Series 065B Modular Development Kit (A5ED065BB32AE4S)
-- **Audio:** Digilent Pmod I2S2 or custom carrier with SSM2518 / WM8960
-- **Toolchain:** Quartus Prime Pro 24.3+
-
-## License
-
-Reference design for evaluation and prototyping.
+- Agilex 5 E-Series 065B Modular Development Kit (`A5ED065BB32AE4S`)
+- Audio: Pmod I2S2, SSM2518 Class-D, or WM8960 headphone codec
+- Quartus Prime Pro 24.3+

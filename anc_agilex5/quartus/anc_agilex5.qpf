@@ -1,0 +1,4 @@
+QUARTUS_VERSION = "24.3"
+DATE = "17:00:00  September 01, 2026"
+
+PROJECT_REVISION = "anc_agilex5"
