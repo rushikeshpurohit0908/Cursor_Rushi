@@ -37,6 +37,18 @@ Open **http://localhost:7860** for the Gradio interface.
 - **Side-by-side comparison** — AI-adaptive vs fixed-parameter NLMS
 - **Rich visualizations** — waveforms, spectrograms, AI parameter timeline, performance metrics
 
+## FPGA deployment
+
+A fixed-point **Verilog RTL** implementation lives in [`fpga/`](fpga/) for synthesis on **Intel Cyclone V / Cyclone 10 / Agilex** and other FPGAs:
+
+```bash
+cd fpga
+make vectors    # export test vectors from fixed-point golden model
+make sim        # RTL simulation (requires Icarus Verilog)
+```
+
+See [`fpga/README.md`](fpga/README.md) for architecture, resource estimates, Quartus flow, and I2S hookup.
+
 ## Project structure
 
 ```
@@ -49,6 +61,7 @@ anc/
   visualize.py         # Matplotlib plots for the UI
 app.py                 # Gradio web demo
 run_demo.py            # CLI runner
+fpga/                  # Verilog RTL for FPGA synthesis
 ```
 
 ## How the AI controller works
