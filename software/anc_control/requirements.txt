@@ -1,0 +1,2 @@
+# No external dependencies for core register access.
+# Optional: numpy/scipy for advanced offline calibration.
