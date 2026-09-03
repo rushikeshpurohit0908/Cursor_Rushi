@@ -166,6 +166,7 @@ a {
   inset: 0;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
@@ -174,6 +175,7 @@ a {
 .face-front {
   color: var(--white);
   background: var(--navy-deep);
+  transform: rotateY(0deg);
 }
 
 .face-back {
