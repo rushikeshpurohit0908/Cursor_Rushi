@@ -207,8 +207,8 @@ a {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(115deg, rgba(0, 8, 20, 0.88) 8%, rgba(0, 20, 48, 0.55) 48%, rgba(0, 12, 28, 0.72) 100%),
-    linear-gradient(0deg, rgba(0, 8, 20, 0.55), transparent 42%);
+    linear-gradient(115deg, rgba(0, 8, 20, 0.62) 0%, rgba(0, 18, 42, 0.28) 46%, rgba(0, 10, 24, 0.48) 100%),
+    linear-gradient(0deg, rgba(0, 8, 20, 0.72) 0%, rgba(0, 8, 20, 0.2) 38%, transparent 58%);
   animation: shimmer 10s ease-in-out infinite alternate;
 }
 
@@ -223,9 +223,9 @@ a {
 }
 
 .brand-logo {
-  width: min(52%, 280px);
+  width: min(64%, 340px);
   height: auto;
-  margin-bottom: clamp(1.4rem, 5vw, 2.6rem);
+  margin-bottom: clamp(1.1rem, 4vw, 2rem);
   animation: rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -252,12 +252,12 @@ a {
 
 .tagline {
   margin: 0;
-  max-width: 12ch;
+  max-width: 14ch;
   font-family: var(--font-display);
-  font-weight: 800;
-  font-size: clamp(2.1rem, 6.4vw, 3.55rem);
-  line-height: 0.98;
-  letter-spacing: -0.03em;
+  font-weight: 700;
+  font-size: clamp(1.75rem, 5.2vw, 2.85rem);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
   animation: rise 900ms 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -473,8 +473,8 @@ a {
 
   .print-front .face-scrim {
     background:
-      linear-gradient(115deg, rgba(0, 8, 20, 0.88) 8%, rgba(0, 20, 48, 0.55) 48%, rgba(0, 12, 28, 0.72) 100%),
-      linear-gradient(0deg, rgba(0, 8, 20, 0.55), transparent 42%);
+      linear-gradient(115deg, rgba(0, 8, 20, 0.62) 0%, rgba(0, 18, 42, 0.28) 46%, rgba(0, 10, 24, 0.48) 100%),
+      linear-gradient(0deg, rgba(0, 8, 20, 0.72) 0%, rgba(0, 8, 20, 0.2) 38%, transparent 58%);
     animation: none;
   }
 
@@ -489,8 +489,8 @@ a {
   }
 
   .print-front .brand-logo {
-    width: 1.7in;
-    margin-bottom: 0.35in;
+    width: 2.05in;
+    margin-bottom: 0.28in;
     filter: brightness(0) invert(1);
     animation: none;
   }
@@ -502,8 +502,8 @@ a {
   }
 
   .print-front .tagline {
-    font-size: 34pt;
-    max-width: 12ch;
+    font-size: 28pt;
+    max-width: 14ch;
   }
 
   .print-front .support {
