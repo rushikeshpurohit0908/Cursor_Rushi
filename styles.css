@@ -1,0 +1,549 @@
+:root {
+  --navy: #001e50;
+  --navy-deep: #000814;
+  --blue: #063b82;
+  --cyan: #00c7fc;
+  --cyan-soft: rgba(0, 199, 252, 0.55);
+  --ink: #0b1628;
+  --muted: #5a6b7d;
+  --paper: #f4f7fb;
+  --white: #ffffff;
+  --line: rgba(1, 30, 80, 0.12);
+  --font-sans: "Manrope", "Segoe UI", sans-serif;
+  --font-display: "Syne", "Manrope", sans-serif;
+  --card-w: min(92vw, 640px);
+  --card-ratio: 1.414;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(900px 500px at 12% -8%, rgba(0, 199, 252, 0.18), transparent 55%),
+    radial-gradient(700px 420px at 92% 8%, rgba(6, 59, 130, 0.28), transparent 50%),
+    linear-gradient(180deg, #07111f 0%, #0d1a2e 42%, #13233a 100%);
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+a {
+  color: var(--cyan);
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--navy);
+  color: var(--white);
+  padding: 0.75rem 1rem;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+
+.site-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem clamp(1rem, 4vw, 2.5rem);
+  background: rgba(7, 17, 31, 0.78);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.site-logo,
+.footer-logo {
+  width: auto;
+  height: 28px;
+  filter: brightness(0) invert(1);
+}
+
+.site-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ghost-btn,
+.solid-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: none;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.7rem 1.15rem;
+  transition: transform 180ms ease, background 180ms ease, color 180ms ease;
+}
+
+.ghost-btn {
+  background: transparent;
+  color: var(--white);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.solid-btn {
+  background: var(--cyan);
+  color: var(--navy-deep);
+}
+
+.solid-btn:hover {
+  transform: translateY(-1px);
+  background: #5ad9ff;
+}
+
+.stage {
+  display: grid;
+  justify-items: center;
+  gap: 1.25rem;
+  padding: clamp(1.5rem, 5vw, 3.5rem) 1rem 4rem;
+}
+
+.stage-hint {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+}
+
+.scene {
+  width: var(--card-w);
+  aspect-ratio: var(--card-ratio);
+  perspective: 1600px;
+  cursor: pointer;
+  outline: none;
+}
+
+.scene:focus-visible {
+  box-shadow: 0 0 0 3px var(--cyan);
+  border-radius: 2px;
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.scene.is-flipped .card {
+  transform: rotateY(180deg);
+}
+
+.face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
+}
+
+.face-front {
+  color: var(--white);
+  background: var(--navy-deep);
+  transform: rotateY(0deg);
+}
+
+.face-back {
+  transform: rotateY(180deg);
+  color: var(--ink);
+  background:
+    radial-gradient(700px 320px at 100% 0%, rgba(0, 199, 252, 0.12), transparent 55%),
+    linear-gradient(165deg, #f8fbff 0%, #e8eef8 55%, #dce6f4 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: clamp(1.35rem, 4vw, 2.35rem);
+  gap: 1.25rem;
+}
+
+.face-media {
+  position: absolute;
+  inset: 0;
+}
+
+.face-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 42%;
+  transform: scale(1.04);
+  animation: drift 18s ease-in-out infinite alternate;
+}
+
+.face-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, rgba(0, 8, 20, 0.62) 0%, rgba(0, 18, 42, 0.28) 46%, rgba(0, 10, 24, 0.48) 100%),
+    linear-gradient(0deg, rgba(0, 8, 20, 0.72) 0%, rgba(0, 8, 20, 0.2) 38%, transparent 58%);
+  animation: shimmer 10s ease-in-out infinite alternate;
+}
+
+.face-content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: clamp(1.4rem, 4.5vw, 2.6rem);
+}
+
+.brand-logo {
+  width: min(64%, 340px);
+  height: auto;
+  margin-bottom: clamp(1.1rem, 4vw, 2rem);
+  animation: rise 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.brand-logo-back {
+  width: min(42%, 190px);
+  margin-bottom: 1.1rem;
+  animation: none;
+  filter: none;
+}
+
+.front-content .brand-logo {
+  filter: brightness(0) invert(1);
+}
+
+.event-mark {
+  margin: 0 0 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  animation: rise 900ms 120ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tagline {
+  margin: 0;
+  max-width: 14ch;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.75rem, 5.2vw, 2.85rem);
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+  animation: rise 900ms 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.support {
+  margin: 1rem 0 0;
+  max-width: 34ch;
+  font-size: clamp(0.95rem, 2.2vw, 1.08rem);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+  animation: rise 900ms 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.back-top {
+  max-width: 34ch;
+}
+
+.back-kicker {
+  margin: 0 0 0.45rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+
+.back-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.45rem, 3.6vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--navy);
+}
+
+.talking-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.85rem;
+}
+
+.talking-points li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.point-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--blue);
+}
+
+.point-copy {
+  font-size: 0.92rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.back-footer {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.cta-line {
+  margin: 0;
+  font-weight: 600;
+  color: var(--navy);
+  font-size: 0.95rem;
+}
+
+.url-line {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+  color: var(--blue);
+  letter-spacing: 0.01em;
+}
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.85rem 1.25rem;
+  padding: 1.25rem clamp(1rem, 4vw, 2.5rem) 2rem;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.88rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.print-sheet {
+  display: none;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: scale(1.04) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.08) translate3d(-1.5%, -1%, 0);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    opacity: 0.92;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .talking-points li {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+
+  .site-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .card {
+    transition: none;
+  }
+}
+
+@media print {
+  @page {
+    size: letter;
+    margin: 0.5in;
+  }
+
+  body {
+    background: white;
+    color: black;
+  }
+
+  .no-print,
+  .stage-hint,
+  .scene,
+  .site-bar,
+  .site-footer {
+    display: none !important;
+  }
+
+  .stage {
+    padding: 0;
+    display: block;
+  }
+
+  .print-sheet {
+    display: grid;
+    gap: 0.5in;
+  }
+
+  .print-card {
+    position: relative;
+    width: 5in;
+    height: 3.5in;
+    overflow: hidden;
+    page-break-inside: avoid;
+    border: 1px solid #c9d3e2;
+  }
+
+  .print-front {
+    color: white;
+    background: #000814;
+  }
+
+  .print-front .face-media,
+  .print-front .face-scrim {
+    position: absolute;
+    inset: 0;
+  }
+
+  .print-front .face-media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    animation: none;
+    transform: none;
+  }
+
+  .print-front .face-scrim {
+    background:
+      linear-gradient(115deg, rgba(0, 8, 20, 0.62) 0%, rgba(0, 18, 42, 0.28) 46%, rgba(0, 10, 24, 0.48) 100%),
+      linear-gradient(0deg, rgba(0, 8, 20, 0.72) 0%, rgba(0, 8, 20, 0.2) 38%, transparent 58%);
+    animation: none;
+  }
+
+  .print-front .face-content {
+    position: relative;
+    z-index: 1;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding: 0.45in;
+  }
+
+  .print-front .brand-logo {
+    width: 2.05in;
+    margin-bottom: 0.28in;
+    filter: brightness(0) invert(1);
+    animation: none;
+  }
+
+  .print-front .event-mark,
+  .print-front .tagline,
+  .print-front .support {
+    animation: none;
+  }
+
+  .print-front .tagline {
+    font-size: 28pt;
+    max-width: 14ch;
+  }
+
+  .print-front .support {
+    font-size: 10pt;
+    max-width: 34ch;
+  }
+
+  .print-back {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 0.4in;
+    gap: 0.2in;
+    background: linear-gradient(165deg, #f8fbff 0%, #e8eef8 55%, #dce6f4 100%);
+  }
+
+  .print-back .brand-logo-back {
+    width: 1.35in;
+    margin-bottom: 0.18in;
+  }
+
+  .print-back .back-title {
+    font-size: 16pt;
+  }
+
+  .print-back .talking-points {
+    gap: 0.12in;
+  }
+
+  .print-back .talking-points li {
+    grid-template-columns: 0.85in 1fr;
+    gap: 0.12in;
+    padding-top: 0.1in;
+  }
+
+  .print-back .point-copy,
+  .print-back .cta-line,
+  .print-back .url-line {
+    font-size: 9pt;
+  }
+}
