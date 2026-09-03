@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Altera Space Expo Flashcard — Accelerating Innovators</title>
+    <meta
+      name="description"
+      content="Altera Space Expo flashcard with brand logo and tagline for aerospace and defense FPGA solutions."
+    />
+    <link rel="icon" href="https://www.altera.com/sites/default/files/favicon_0.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#flashcard">Skip to flashcard</a>
+
+    <header class="site-bar no-print" aria-label="Altera">
+      <img class="site-logo" src="assets/altera-logo.png" alt="Altera" width="140" height="41" />
+      <div class="site-actions">
+        <button type="button" class="ghost-btn" id="flipBtn" aria-controls="flashcard">
+          Flip card
+        </button>
+        <button type="button" class="solid-btn" id="printBtn">Print / Save PDF</button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <p class="stage-hint no-print">Click the card to flip · Print for a 5×7 handout</p>
+
+      <div class="scene" id="flashcard" tabindex="0" role="button" aria-pressed="false" aria-label="Altera Space Expo flashcard. Front shows logo and tagline. Press Enter or click to flip.">
+        <div class="card" id="card">
+          <article class="face face-front" aria-label="Front">
+            <div class="face-media" aria-hidden="true">
+              <img src="assets/space-expo-hero.png" alt="" width="1600" height="900" />
+            </div>
+            <div class="face-scrim" aria-hidden="true"></div>
+            <div class="face-content front-content">
+              <img
+                class="brand-logo"
+                src="assets/altera-logo.png"
+                alt="Altera"
+                width="3000"
+                height="881"
+              />
+              <p class="event-mark">Space Expo</p>
+              <h1 class="tagline">Accelerating Innovators</h1>
+              <p class="support">
+                FPGA &amp; SoC performance for aerospace, defense, and
+                mission-critical space systems.
+              </p>
+            </div>
+          </article>
+
+          <article class="face face-back" aria-label="Back" aria-hidden="true">
+            <div class="back-top">
+              <img
+                class="brand-logo brand-logo-back"
+                src="assets/altera-logo.png"
+                alt="Altera"
+                width="3000"
+                height="881"
+              />
+              <p class="back-kicker">Aerospace &amp; Defense</p>
+              <h2 class="back-title">Built for orbit-to-ground missions</h2>
+            </div>
+
+            <ul class="talking-points">
+              <li>
+                <span class="point-label">Adapt</span>
+                <span class="point-copy">Reconfigure in the field for evolving mission needs</span>
+              </li>
+              <li>
+                <span class="point-label">SWaP</span>
+                <span class="point-copy">High compute density for size-, weight-, and power-constrained platforms</span>
+              </li>
+              <li>
+                <span class="point-label">Secure</span>
+                <span class="point-copy">Hardened crypto, anti-tamper, and secure communications paths</span>
+              </li>
+              <li>
+                <span class="point-label">Agilex™</span>
+                <span class="point-copy">From Direct RF to edge AI signal processing at the tactical edge</span>
+              </li>
+            </ul>
+
+            <div class="back-footer">
+              <p class="cta-line">Talk with the Altera Aerospace, Defense &amp; Government team</p>
+              <p class="url-line">altera.com/fpga-solutions/aerospace-defense</p>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <section class="print-sheet" aria-label="Print layout">
+        <div class="print-card print-front">
+          <div class="face-media" aria-hidden="true">
+            <img src="assets/space-expo-hero.png" alt="" width="1600" height="900" />
+          </div>
+          <div class="face-scrim" aria-hidden="true"></div>
+          <div class="face-content front-content">
+            <img class="brand-logo" src="assets/altera-logo.png" alt="Altera" width="3000" height="881" />
+            <p class="event-mark">Space Expo</p>
+            <h1 class="tagline">Accelerating Innovators</h1>
+            <p class="support">
+              FPGA &amp; SoC performance for aerospace, defense, and
+              mission-critical space systems.
+            </p>
+          </div>
+        </div>
+        <div class="print-card print-back">
+          <div class="back-top">
+            <img class="brand-logo brand-logo-back" src="assets/altera-logo.png" alt="Altera" width="3000" height="881" />
+            <p class="back-kicker">Aerospace &amp; Defense</p>
+            <h2 class="back-title">Built for orbit-to-ground missions</h2>
+          </div>
+          <ul class="talking-points">
+            <li>
+              <span class="point-label">Adapt</span>
+              <span class="point-copy">Reconfigure in the field for evolving mission needs</span>
+            </li>
+            <li>
+              <span class="point-label">SWaP</span>
+              <span class="point-copy">High compute density for size-, weight-, and power-constrained platforms</span>
+            </li>
+            <li>
+              <span class="point-label">Secure</span>
+              <span class="point-copy">Hardened crypto, anti-tamper, and secure communications paths</span>
+            </li>
+            <li>
+              <span class="point-label">Agilex™</span>
+              <span class="point-copy">From Direct RF to edge AI signal processing at the tactical edge</span>
+            </li>
+          </ul>
+          <div class="back-footer">
+            <p class="cta-line">Talk with the Altera Aerospace, Defense &amp; Government team</p>
+            <p class="url-line">altera.com/fpga-solutions/aerospace-defense</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer no-print">
+      <img class="footer-logo" src="assets/altera-logo.png" alt="Altera" width="100" height="29" />
+      <p>
+        © Altera Corporation · Space Expo flashcard ·
+        <a href="https://www.altera.com/" target="_blank" rel="noopener noreferrer">altera.com</a>
+      </p>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
