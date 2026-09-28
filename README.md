@@ -10,6 +10,7 @@ Ku-band Direct Radiating Array payload architecture (AGRW027/039 device clusters
 | [`dra/block_diagram.svg`](dra/block_diagram.svg) | Vector block diagram |
 | [`dra/block_diagram.png`](dra/block_diagram.png) | Raster export (2400 px wide) |
 | [`dra/DRA_Uplink_Downlink.pptx`](dra/DRA_Uplink_Downlink.pptx) | PowerPoint deck (9 slides, 16:9) |
+| [`dra/Speaker_Notes.md`](dra/Speaker_Notes.md) | Speaker notes for the deck |
 | [`dra/build_dra_pptx.py`](dra/build_dra_pptx.py) | PPTX generator script |
 
 ### Architecture at a glance
