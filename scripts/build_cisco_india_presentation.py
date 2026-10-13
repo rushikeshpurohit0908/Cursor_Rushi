@@ -226,7 +226,7 @@ def build(out_path: Path):
     title_block(s, "Executive Summary", "Cisco India regional deep-dive")
     agenda = [
         ("1", "Opportunity Pipeline", "Strategic Opportunities"),
-        ("2", "SWOT Analysis — India Region", "Customer Landscape"),
+        ("2", "SWOT Analysis — Cisco View about Altera", "Customer Landscape"),
         ("3", "Critical Needs and Requirements", "Critical Needs"),
         ("4", "Relationship Mapping", "Influence Map"),
     ]
@@ -344,34 +344,38 @@ def build(out_path: Path):
     footer(s)
     slides_meta.append("Pipeline Focus")
 
-    # 6. SWOT
+    # 6. SWOT — Cisco View about Altera
     s = blank_slide(prs)
     header_bar(s, "Customer Landscape · SWOT")
-    title_block(s, "SWOT Analysis — India Region (Altera View)", "Control-plane / SP design activity · Bengaluru")
+    title_block(
+        s,
+        "SWOT Analysis — Cisco View about Altera",
+        "How Bengaluru SP / control-plane engineering evaluates Altera vs AMD, Lattice, Microchip",
+    )
     quads = [
         ("Strengths", SWOT_S, [
-            "30+ FPGA eng in Bengaluru owning SP routers, ASR/8000 control path, optical (w/ Italy)",
-            "Friendly exec relationship with Vijay Pramod; CAB + training delivered (2025)",
-            "Live traction: ASR1k TM on Agilex 7 M; AI/ML tensor story for control/BMC",
-            "PQC / secure-boot roadmap vs Microchip security incumbency",
+            "Agilex fabric power and performance; leadership IP, turnkey solutions, P4 architectures",
+            "High-performance AI/ML (Tensor block); Agilex 5/3 features aligned for control path & BMC",
+            "Strong local Bengaluru FAE support (TM 240 MHz timing, MCDMA patches, APS responsiveness)",
+            "Cisco-specific Secure Boot on MAX10; PQC / SEU roadmap credible for next platforms",
         ]),
         ("Weaknesses", SWOT_W, [
-            "Xilinx Artix incumbency on control paths; SmartFusion2 for security",
-            "Existing stacks ported to Xilinx / Microchip — high switching cost",
-            "Agilex 5 price gap (~40% vs Lattice); weak below ~$8–$20 vs PolarFire/Lattice",
-            "Thin coverage: 5% FSE / 10% FAE Cisco FTE vs rising support load",
+            "Uncompetitive at very low end (need ~$8 secure device); PolarFire / Lattice win those sockets",
+            "Agilex 5 ~40% above Lattice on India RFQs (130K–200K LE); Agilex 3 cost still too high",
+            "No DDR5 planned on Agilex 7; lower on-chip memory ratio and crypto SIP/HIP vs Versal",
+            "Migration friction from Artix / SmartFusion2 codebases — tools & SW maturity under scrutiny",
         ]),
         ("Opportunities", SWOT_O, [
-            "Control-plane sockets on 8000 / ASR from Bangalore; Agilex 5/3 + MAX 10 attach",
-            "Lavena returning to Agilex 7 after AMD timing issues; TM DWIN + Berkeley ramp",
-            "PQC, SEU, AI/ML telemetry demos already in motion with India eng",
-            "Cisco manufacturing investment in India; Marco Croci push for India → Altera",
+            "Displace Xilinx Artix & Microchip SF2 on control plane with Agilex 5 + PQC secure boot",
+            "ASR1k Traffic Manager / Lavena Agilex 7 design wins; MAX10 BMC and platform attach",
+            "AI/ML telemetry, ASSP/ASIC replacement, and optical fabric attach (India + Italy)",
+            "Refresh M10 / low-cost glue leveraging Agilex strengths where Lattice is mid-range only",
         ]),
         ("Threats", SWOT_T, [
-            "AMD Versal; Lattice mid-range; PolarFire security lock-in on CAT8k-class",
-            "Datapath → Silicon One / ASICs — FPGA TAM concentrates on control/glue",
-            "RFQ pricing losses; low-end secure ~$8 device request closed (no product)",
-            "Geopolitical / indigenous-FPGA pressure; WW inventory diverting focus",
+            "AMD Versal 2 with better HIP; HBM3 roadmap for security/NT; 224G transmission path",
+            "Lattice entering mid-range (incl. HP XCVRs); PolarFire security lock-in on CAT8k-class",
+            "Virtualization / SW startups reduce FPGA content; Silicon One absorbs datapath value",
+            "Geopolitical / indigenous-FPGA pressure; LPDDR4 EOL cycle creates redesign risk",
         ]),
     ]
     positions = [

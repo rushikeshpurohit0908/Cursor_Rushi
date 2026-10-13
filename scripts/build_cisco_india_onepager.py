@@ -255,30 +255,40 @@ def build(out_path: Path, also_append_to: Path | None = None):
         space=2,
     )
 
-    # ---- CENTER TOP: SWOT Customer view ----
+    # ---- CENTER TOP: SWOT — Cisco View about Altera ----
     panel(slide, Inches(3.9), Inches(1.35), Inches(5.35), Inches(2.55))
-    textbox(slide, Inches(4.05), Inches(1.42), Inches(5.0), Inches(0.25), "SWOT Analysis — Customer View (Cisco India)", size=11, bold=True, color=NAVY)
+    textbox(
+        slide,
+        Inches(4.05),
+        Inches(1.42),
+        Inches(5.0),
+        Inches(0.25),
+        "SWOT Analysis — Cisco View about Altera",
+        size=11,
+        bold=True,
+        color=NAVY,
+    )
 
     swot = [
         (Inches(4.05), Inches(1.75), "Strengths", SWOT_S, [
-            "30+ FPGA eng in Bengaluru; owns SP routing & optical design",
-            "8000 / ASR platforms + Silicon One datapath leadership",
-            "Deep director bench (Alap, Akhil, Vijay)",
+            "Agilex fabric power/perf; strong IP & turnkey / P4 architectures",
+            "AI/ML Tensor blocks; A5/A3 fit for control-plane & BMC",
+            "Local Bengaluru FAE depth (TM timing, MCDMA, APS)",
         ]),
         (Inches(6.65), Inches(1.75), "Weaknesses", SWOT_W, [
-            "Control plane locked to Xilinx Artix / Microchip SF2",
-            "Slow FPGA vendor switch; price-sensitive RFQs",
-            "Legacy codebases raise migration cost",
+            "Uncompetitive <$20 / no ~$8 secure device vs PolarFire",
+            "Agilex 5 ~40% above Lattice on India RFQs; A3 cost high",
+            "No DDR5 on Agilex 7; memory ratio / crypto HIP gaps vs AMD",
         ]),
         (Inches(4.05), Inches(2.7), "Opportunities", SWOT_O, [
-            "Control-plane refresh; PQC / secure-boot mandates",
-            "Make-in-India manufacturing expands local programs",
-            "AI/ML on control path & BMC attach",
+            "Displace Artix / SF2 on control plane with A5 + PQC secure boot",
+            "TM / Lavena Agilex 7 wins; MAX10 BMC & platform attach",
+            "AI telemetry / ASSP-ASIC replacement sockets in India designs",
         ]),
         (Inches(6.65), Inches(2.7), "Threats", SWOT_T, [
-            "ASIC absorption of datapath value",
-            "Lattice / AMD / PolarFire price-feature pressure",
-            "Virtualization & SW disrupts HW attach",
+            "AMD Versal 2 HIP / HBM3; Lattice mid-range with HP XCVRs",
+            "PolarFire security lock-in; virtualization cuts FPGA content",
+            "Geopolitics / indigenous FPGA pressure; LPDDR4 EOL cycle",
         ]),
     ]
     for left, top, title, color, items in swot:
