@@ -6,6 +6,14 @@ Introduce the Ku-band DRA payload: separate RX and TX AGRW027/039 clusters, Dire
 ## Slide 2 — System Overview
 Walk the three-box story: RX uplink (32 beams / 4 devices), TX downlink (40/32 beams / 5 devices), and the router that bridges them to the feeder link.
 
+### Onboard Router / Switch Fabric (deep dive)
+See `Onboard_Router_Switch_Fabric.md` and `DRA_Fabric_Editable_Slides.pptx`:
+- Regenerative cross-connect: post-Low-PHY packets/TBs only (not 64 Gsps samples)
+- Ports: 4 RX + 5 TX + feeder (+ control)
+- 58 Gbps = SerDes **lane class** (PAM4); aggregate = lanes × ports × efficiency
+- Functions: UL→DL beam mesh, feeder gateway, beam remap, FDIR/spare, multicast
+- Same logical fabric for Option A (AGRW) and Option B (Agilex 7 + AFE7950)
+
 ## Slide 3 — Block Diagram
 Use the full diagram to show antenna → LNA → RX cluster → DSP → router → TX DSP → DAC cluster → HPA → antenna. Call out Device 5 spare channels in DVB-S2X-only mode.
 

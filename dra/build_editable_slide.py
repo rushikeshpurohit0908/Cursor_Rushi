@@ -434,10 +434,10 @@ def build():
         Inches(8.9),
         Inches(0.48),
         [
-            ("Onboard Router / Switch Fabric", 14, False, WHITE, PP_ALIGN.CENTER, "Georgia", 2),
+            ("Onboard Router / Switch Fabric", 13, False, WHITE, PP_ALIGN.CENTER, "Georgia", 1),
             (
-                "58 Gbps SerDes interconnect between device clusters and Feeder-link stage",
-                9,
+                "58 Gbps-class SerDes  ·  Regenerative packet/TB switch (not raw IQ)  ·  RX ↔ TX ↔ Feeder",
+                8,
                 False,
                 RGBColor(0xB8, 0xD0, 0xE8),
                 PP_ALIGN.CENTER,

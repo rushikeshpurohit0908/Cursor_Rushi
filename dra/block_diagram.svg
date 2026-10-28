@@ -146,7 +146,7 @@
     <rect x="280" y="565" width="1040" height="80" rx="12" fill="url(#routerGrad)" stroke="#4A7DB0" stroke-width="1.5"/>
   </g>
   <text x="800" y="600" text-anchor="middle" fill="#F2F6F9" font-family="Georgia, 'Times New Roman', serif" font-size="20">Onboard Router / Switch Fabric</text>
-  <text x="800" y="625" text-anchor="middle" fill="#B8D0E8" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">58 Gbps SerDes interconnect between device clusters and Feeder-link stage</text>
+  <text x="800" y="625" text-anchor="middle" fill="#B8D0E8" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">58 Gbps-class SerDes | Regenerative packet/TB switch | RX &lt;-&gt; TX &lt;-&gt; Feeder</text>
 
   <!-- Arrow Router | TX -->
   <line x1="800" y1="645" x2="800" y2="675" stroke="#C9D7E3" stroke-width="2.5" marker-end="url(#arrowWhite)"/>

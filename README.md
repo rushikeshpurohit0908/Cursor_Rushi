@@ -20,6 +20,15 @@ Two Ku-band Direct Radiating Array options for the same 32-beam uplink / 40-beam
 - **RX:** 14.0–14.5 GHz, 32 beams, 4× devices (8 ADC ch)
 - **TX:** 10.7–12.75 GHz, 40/32 beams, 5× devices (8 DAC ch)
 - **Isolation:** 9 Direct-RF devices on separate TX/RX paths
+- **Fabric:** 58 Gbps-class SerDes regenerative switch (RX ↔ TX ↔ Feeder)
+
+### Onboard Router / Switch Fabric (deep dive)
+
+| File | Description |
+|---|---|
+| [`dra/Onboard_Router_Switch_Fabric.md`](dra/Onboard_Router_Switch_Fabric.md) | Topology, SerDes, traffic classes, switching functions, lane plan |
+| [`dra/DRA_Fabric_Editable_Slides.pptx`](dra/DRA_Fabric_Editable_Slides.pptx) | 4 editable slides on the fabric |
+| [`dra/build_fabric_slides.py`](dra/build_fabric_slides.py) | Generator for fabric slides |
 
 ### Option B — Agilex 7 FPGA + TI AFE7950 RFIC
 
