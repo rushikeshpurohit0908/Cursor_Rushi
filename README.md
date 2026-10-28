@@ -12,6 +12,8 @@ Two Ku-band Direct Radiating Array options for the same 32-beam uplink / 40-beam
 | [`dra/block_diagram.svg`](dra/block_diagram.svg) | Vector block diagram |
 | [`dra/block_diagram.png`](dra/block_diagram.png) | Raster export (2400 px wide) |
 | [`dra/DRA_Uplink_Downlink.pptx`](dra/DRA_Uplink_Downlink.pptx) | PowerPoint deck (9 slides, 16:9) |
+| [`dra/DRA_Architecture_Editable_Slide.pptx`](dra/DRA_Architecture_Editable_Slide.pptx) | **Editable** single-slide diagram (native shapes) |
+| [`dra/build_editable_slide.py`](dra/build_editable_slide.py) | Generator for the editable slide |
 | [`dra/Speaker_Notes.md`](dra/Speaker_Notes.md) | Speaker notes |
 | [`dra/build_dra_pptx.py`](dra/build_dra_pptx.py) | PPTX generator |
 
