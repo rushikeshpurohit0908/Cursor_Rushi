@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680">
   <defs>
     <style type="text/css"><![CDATA[
       .title { font: 700 22px 'Liberation Sans', Arial, sans-serif; fill: #0B2B45; }
@@ -13,43 +13,55 @@
       <path d="M0,0 L6,3 L0,6 Z" fill="#007ACC"/>
     </marker>
   </defs>
-  <rect width="1200" height="640" fill="#F5F7FA"/>
+  <rect width="1200" height="680" fill="#F5F7FA"/>
   <text x="40" y="40" class="title">Cisco FC128 - Agilex 7 AGM039 (R47) Datapath</text>
-  <text x="40" y="62" class="sub">8 x 112G client  |  16 x 58G system  |  8 x 58G secondary</text>
+  <text x="40" y="62" class="sub">8 x 112G client  |  Search IP (TCAM/BCAM/MBL)  |  16 x 58G system  |  8 x 58G secondary</text>
 
   <!-- Client -->
-  <rect x="40" y="110" width="260" height="300" rx="10" fill="#FFFFFF" stroke="#007ACC" stroke-width="2"/>
-  <rect x="40" y="110" width="260" height="40" rx="10" fill="#007ACC"/>
-  <rect x="40" y="130" width="260" height="20" fill="#007ACC"/>
-  <text x="60" y="136" class="h">CLIENT (FHT)</text>
-  <text x="60" y="180" class="b">8 x 112G PAM4</text>
-  <text x="60" y="205" class="b">128GFC / FC-PI-8</text>
-  <text x="60" y="230" class="b">SFP112 optics</text>
-  <text x="60" y="255" class="b">PCS + RS-FEC</text>
-  <text x="60" y="290" class="small">Ports 0-7</text>
-  <text x="60" y="310" class="small">~897.6 Gbps aggregate</text>
+  <rect x="40" y="110" width="240" height="300" rx="10" fill="#FFFFFF" stroke="#007ACC" stroke-width="2"/>
+  <rect x="40" y="110" width="240" height="40" rx="10" fill="#007ACC"/>
+  <rect x="40" y="130" width="240" height="20" fill="#007ACC"/>
+  <text x="55" y="136" class="h">CLIENT (FHT)</text>
+  <text x="55" y="180" class="b">8 x 112G PAM4</text>
+  <text x="55" y="205" class="b">128GFC / FC-PI-8</text>
+  <text x="55" y="230" class="b">SFP112 optics</text>
+  <text x="55" y="255" class="b">PCS + RS-FEC</text>
+  <text x="55" y="290" class="small">Ports 0-7</text>
+  <text x="55" y="310" class="small">~897.6 Gbps aggregate</text>
 
   <!-- FPGA -->
-  <rect x="380" y="90" width="440" height="360" rx="12" fill="#FFFFFF" stroke="#0B2B45" stroke-width="2"/>
-  <rect x="380" y="90" width="440" height="44" rx="12" fill="#0B2B45"/>
-  <rect x="380" y="114" width="440" height="20" fill="#0B2B45"/>
-  <text x="400" y="118" class="h">Agilex 7 M-Series AGM039 / R47</text>
+  <rect x="340" y="90" width="500" height="400" rx="12" fill="#FFFFFF" stroke="#0B2B45" stroke-width="2"/>
+  <rect x="340" y="90" width="500" height="44" rx="12" fill="#0B2B45"/>
+  <rect x="340" y="114" width="500" height="20" fill="#0B2B45"/>
+  <text x="360" y="118" class="h">Agilex 7 M-Series AGM039 / R47</text>
 
-  <rect x="410" y="160" width="180" height="90" rx="8" fill="#EEF3F8"/>
-  <text x="425" y="190" class="b">FC-128 PCS</text>
-  <text x="425" y="215" class="small">+ RS-FEC</text>
+  <rect x="365" y="155" width="145" height="85" rx="8" fill="#EEF3F8"/>
+  <text x="378" y="185" class="b">FC-128 PCS</text>
+  <text x="378" y="210" class="small">+ RS-FEC</text>
 
-  <rect x="610" y="160" width="180" height="90" rx="8" fill="#EEF3F8"/>
-  <text x="625" y="190" class="b">Gearbox / Mux</text>
-  <text x="625" y="215" class="small">+ buffering / QoS</text>
+  <rect x="530" y="155" width="145" height="85" rx="8" fill="#D6EAF8"/>
+  <text x="543" y="180" class="b">Search IP</text>
+  <text x="543" y="202" class="small">TCAM / BCAM</text>
+  <text x="543" y="222" class="small">/ MBL</text>
 
-  <rect x="410" y="280" width="380" height="90" rx="8" fill="#EEF3F8"/>
-  <text x="425" y="315" class="b">System PCS / raw SerDes + CMIS mgmt</text>
-  <text x="425" y="340" class="small">Optional HBM2E / DDR5 deep buffers</text>
+  <rect x="695" y="155" width="125" height="85" rx="8" fill="#EEF3F8"/>
+  <text x="708" y="185" class="b">Gearbox</text>
+  <text x="708" y="210" class="small">+ buffer / QoS</text>
 
-  <line x1="590" y1="205" x2="610" y2="205" class="arrow"/>
-  <line x1="500" y1="250" x2="500" y2="280" class="arrow"/>
-  <line x1="700" y1="250" x2="700" y2="280" class="arrow"/>
+  <rect x="365" y="270" width="455" height="70" rx="8" fill="#EEF3F8"/>
+  <text x="380" y="300" class="b">System PCS / raw SerDes + CMIS mgmt</text>
+  <text x="380" y="322" class="small">Optional HBM2E / DDR5 - deep buffers + MBL scale-out</text>
+
+  <rect x="365" y="360" width="455" height="100" rx="8" fill="#EEF3F8"/>
+  <text x="380" y="390" class="b">Classify use cases</text>
+  <text x="380" y="415" class="small">Zoning / ACL / VSAN / DID-SID | header classify pre-gearbox</text>
+  <text x="380" y="435" class="small">BCAM: FID/WWPN maps | MBL: scale-out on HBM2E (R47B) / DDR5</text>
+
+  <line x1="510" y1="197" x2="530" y2="197" class="arrow"/>
+  <line x1="675" y1="197" x2="695" y2="197" class="arrow"/>
+  <line x1="437" y1="240" x2="437" y2="270" class="arrow"/>
+  <line x1="602" y1="240" x2="602" y2="270" class="arrow"/>
+  <line x1="757" y1="240" x2="757" y2="270" class="arrow"/>
 
   <!-- System -->
   <rect x="900" y="110" width="260" height="180" rx="10" fill="#FFFFFF" stroke="#1F7A4C" stroke-width="2"/>
@@ -67,10 +79,11 @@
   <text x="920" y="390" class="b">8 x 58G</text>
   <text x="920" y="415" class="small">Protect / debug / expand</text>
 
-  <line x1="300" y1="260" x2="380" y2="260" class="arrow"/>
-  <line x1="820" y1="200" x2="900" y2="200" class="arrow"/>
-  <line x1="820" y1="370" x2="900" y2="370" class="arrow"/>
+  <line x1="280" y1="260" x2="340" y2="260" class="arrow"/>
+  <line x1="840" y1="200" x2="900" y2="200" class="arrow"/>
+  <line x1="840" y1="370" x2="900" y2="370" class="arrow"/>
 
   <text x="40" y="560" class="small">Altera Confidential | Cisco FC128 Proposal | AGM039 R47</text>
   <text x="40" y="585" class="small">FHT to 116G PAM4 covers 112.2G 128GFC | FGT to 58G PAM4 covers system banks</text>
+  <text x="40" y="610" class="small">Altera Search IP (TCAM/BCAM/MBL) recommended; M-Series enablement open for FAE confirm</text>
 </svg>

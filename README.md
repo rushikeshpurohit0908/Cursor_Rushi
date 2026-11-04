@@ -18,6 +18,7 @@ Technical proposal for Cisco **128G Fibre Channel** on **Altera Agilex™ 7 M-Se
 - **System:** 16 × 58G PAM4
 - **Secondary:** 8 × 58G
 - **Device:** Agilex 7 M 039 · R47
+- **Lookup:** Altera Search IP — TCAM / BCAM / MBL (zoning, ACL, VSAN, DID-SID)
 
 ### Rebuild deck
 

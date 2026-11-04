@@ -35,7 +35,7 @@ FONT = "Liberation Sans"
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "presentations" / "assets"
 OUT_DIR = ROOT / "presentations"
-TOTAL = 9
+TOTAL = 10
 
 
 def set_run_font(run, size=14, bold=False, color=DARK, font_name=FONT):
@@ -275,18 +275,19 @@ def build(out_path: Path):
     agenda = [
         ("01", "Requirements & fit", "Stated I/O plan vs device resources"),
         ("02", "128GFC primer", "FC-PI-8 signaling, FEC, optics"),
-        ("03", "Architecture", "Client → gearbox → system datapath"),
-        ("04", "Package options", "R47A / R47B / R47C selection guide"),
-        ("05", "Engagement plan", "Align → PoC → Pilot → Production"),
+        ("03", "Architecture", "Client → Search IP → gearbox → system"),
+        ("04", "Search IP / TCAM", "Altera TCAM, BCAM, MBL for classify"),
+        ("05", "Package options", "R47A / R47B / R47C selection guide"),
+        ("06", "Engagement plan", "Align → PoC → Pilot → Production"),
     ]
-    y = Inches(1.55)
+    y = Inches(1.45)
     for num, title, blurb in agenda:
-        add_rect(s, Inches(0.5), y, Inches(12.3), Inches(0.9), LIGHT_BG)
-        add_rect(s, Inches(0.5), y, Inches(0.12), Inches(0.9), ACCENT)
-        add_text_box(s, Inches(0.85), y + Inches(0.15), Inches(0.8), Inches(0.55), num, size=22, bold=True, color=ALTERA_BLUE, anchor=MSO_ANCHOR.MIDDLE)
-        add_text_box(s, Inches(1.8), y + Inches(0.15), Inches(10), Inches(0.35), title, size=18, bold=True, color=NAVY)
-        add_text_box(s, Inches(1.8), y + Inches(0.5), Inches(10), Inches(0.3), blurb, size=12, color=GRAY)
-        y += Inches(1.0)
+        add_rect(s, Inches(0.5), y, Inches(12.3), Inches(0.8), LIGHT_BG)
+        add_rect(s, Inches(0.5), y, Inches(0.12), Inches(0.8), ACCENT)
+        add_text_box(s, Inches(0.85), y + Inches(0.1), Inches(0.8), Inches(0.55), num, size=20, bold=True, color=ALTERA_BLUE, anchor=MSO_ANCHOR.MIDDLE)
+        add_text_box(s, Inches(1.8), y + Inches(0.1), Inches(10), Inches(0.3), title, size=16, bold=True, color=NAVY)
+        add_text_box(s, Inches(1.8), y + Inches(0.42), Inches(10), Inches(0.28), blurb, size=12, color=GRAY)
+        y += Inches(0.88)
     footer(s, page)
 
     # ---- 3 Requirements ----
@@ -395,7 +396,7 @@ def build(out_path: Path):
         Inches(2.15),
         Inches(5.0),
         Inches(1.8),
-        ["FC framing · credit · link init", "Gearbox / lane stripe / rate-match", "Stats · CMIS · telemetry", "Optional HBM / DDR5 buffering"],
+        ["FC framing · credit · link init", "Search IP: TCAM / BCAM / MBL", "Gearbox / lane stripe / rate-match", "Stats · CMIS · optional HBM / DDR5"],
         size=12,
         space=4,
     )
@@ -430,7 +431,7 @@ def build(out_path: Path):
         [
             "128GFC PMA/PCS at 112.2G PAM4 with equalization and CDR on FHT",
             "Mandatory RS-FEC encode/decode; FC framing, R_RDY / BB_Credit, link initialization",
-            "8×112G ↔ 16×58G gearbox with secondary 8×58G for dual-ASIC, protect, or diagnostics",
+            "Altera Search IP classify (TCAM/BCAM/MBL) ahead of 8×112G ↔ 16×58G gearbox",
             "Management: CMIS for SFP112, counters, SEU scrubbing; optional PCIe 5.0/CXL on R47A",
         ],
         size=13,
@@ -438,7 +439,89 @@ def build(out_path: Path):
     )
     footer(s, page)
 
-    # ---- 6 Package ----
+    # ---- 6 Search IP / TCAM ----
+    page += 1
+    s = blank_slide(prs)
+    header_bar(s, "Lookup · Altera Search IP")
+    title_block(
+        s,
+        "TCAM / BCAM / MBL for FC128 classify",
+        "Primary recommendation: Altera Memory Subsystem Lookup Core IPs (up to 8 instances)",
+    )
+    # Three IP cards
+    ip_cards = [
+        (
+            "TCAM (MS-TCAM)",
+            ACCENT,
+            [
+                "Ternary, bit-maskable search",
+                "AXI-ST line-rate · AXI-Lite mgmt",
+                "Key 16–512b · result 8–1024b",
+                "Entries ~32–1024 (up to 4096/table)",
+                "Up to 4 core tables · 1 search/cycle",
+            ],
+        ),
+        (
+            "BCAM",
+            CLIENT,
+            [
+                "On-chip exact match (cuckoo)",
+                "Key 16–512b · entries 32–4196",
+                "Modify supported",
+                "FID / WWPN map tables",
+                "Low-latency exact classify",
+            ],
+        ),
+        (
+            "MBL",
+            SYSTEM,
+            [
+                "External-memory exact match",
+                "Key/result up to ~1280b",
+                "Scales with DDR5 / HBM2E",
+                "Rule depth beyond on-chip",
+                "Pairs with R47B HBM path",
+            ],
+        ),
+    ]
+    x = Inches(0.4)
+    for title, color, bullets in ip_cards:
+        add_rect(s, x, Inches(1.5), Inches(4.1), Inches(3.35), LIGHT_BG)
+        add_rect(s, x, Inches(1.5), Inches(4.1), Inches(0.45), color)
+        add_text_box(
+            s,
+            x + Inches(0.15),
+            Inches(1.55),
+            Inches(3.8),
+            Inches(0.35),
+            title,
+            size=14,
+            bold=True,
+            color=WHITE,
+            anchor=MSO_ANCHOR.MIDDLE,
+        )
+        add_bullets(s, x + Inches(0.2), Inches(2.1), Inches(3.7), Inches(2.5), bullets, size=12, space=4)
+        x += Inches(4.25)
+
+    add_rect(s, Inches(0.4), Inches(5.05), Inches(12.5), Inches(1.8), LIGHT_BG)
+    add_text_box(s, Inches(0.65), Inches(5.15), Inches(12), Inches(0.3), "FC128 use cases · enablement", size=13, bold=True, color=NAVY)
+    add_bullets(
+        s,
+        Inches(0.65),
+        Inches(5.5),
+        Inches(12),
+        Inches(1.2),
+        [
+            "Zoning / ACL / VSAN / DID-SID classify · frame/header classify before gearbox · BCAM for FID/WWPN · MBL scale-out on HBM2E (R47B) or DDR5",
+            "UG emphasizes Agilex 7 F/I-Series — for AGM039 M-Series, Search/TCAM remains the recommended fabric; family enablement / Soft CAM portability: FAE confirm",
+            "Optional partner: Design Gateway tCAM-IP (~1M rules, ~400 MSPS) — secondary to first-party Altera Search IP",
+        ],
+        size=12,
+        space=2,
+    )
+    footer(s, page)
+
+    # ---- 7 Package ----
     page += 1
     s = blank_slide(prs)
     header_bar(s, "Device · Package Selection")
@@ -475,15 +558,16 @@ def build(out_path: Path):
     )
     footer(s, page)
 
-    # ---- 7 Why Altera ----
+    # ---- 8 Why Altera ----
     page += 1
     s = blank_slide(prs)
     header_bar(s, "Value · Why Agilex 7 M")
-    title_block(s, "Fit for Cisco FC128", "Transceiver density, memory options, and local support")
+    title_block(s, "Fit for Cisco FC128", "Transceiver density, Search IP, memory options, and local support")
     rows = [
         ["112G PAM4 client", "F-Tile FHT to 116G PAM4 covers 112.2G 128GFC"],
         ["Dense 58G fabric", "FGT to 58G PAM4 — 48 to 64 channels by R47 SKU"],
         ["Single-chip 8-port bridge", "One AGM039 holds client + both system banks"],
+        ["Zoning / ACL / classify", "Altera Search IP — TCAM / BCAM / MBL"],
         ["Deep queues", "DDR5 external and/or HBM2E on R47B"],
         ["Host / control", "R-Tile PCIe 5.0 / CXL on R47A"],
         ["Program longevity", "Altera production roadmap + Cisco India FAE coverage"],
@@ -497,20 +581,20 @@ def build(out_path: Path):
         ["Cisco need", "Altera answer"],
         rows,
         col_widths=[Inches(3.8), Inches(8.5)],
-        font_size=13,
+        font_size=12,
     )
     footer(s, page)
 
-    # ---- 8 Engagement ----
+    # ---- 9 Engagement ----
     page += 1
     s = blank_slide(prs)
     header_bar(s, "Engagement · Path to Production")
-    title_block(s, "Phased plan", "Align package and SerDes protocol before silicon bring-up")
+    title_block(s, "Phased plan", "Align package, SerDes protocol, and Search IP before silicon bring-up")
     phases = [
-        ("0", "Align", "R47 SKU, system protocol,\nFEC ownership", ALTERA_BLUE),
-        ("1", "Architecture", "BW/latency budget,\npin mux, thermal", CLIENT),
-        ("2", "PoC", "1–2 clients + system\nloopback, BER evidence", SYSTEM),
-        ("3", "Pilot", "Full 8×112 + 16×58,\nCMIS, stats", ORANGE),
+        ("0", "Align", "R47 SKU, system protocol,\nFEC, Search IP enablement", ALTERA_BLUE),
+        ("1", "Architecture", "BW/latency, pin mux,\nTCAM/BCAM/MBL sizing", CLIENT),
+        ("2", "PoC", "1–2 clients + loopback\n+ sample classify path", SYSTEM),
+        ("3", "Pilot", "Full 8×112 + 16×58,\nCMIS, Search IP tables", ORANGE),
         ("4", "Production", "Timing, SEU, PVT,\nmfg test vectors", NAVY),
     ]
     x = Inches(0.4)
@@ -531,18 +615,18 @@ def build(out_path: Path):
         Inches(12),
         Inches(1.1),
         [
-            "R47A vs B vs C · system SerDes protocol on 16×58G / 8×58G · soft vs hardened FEC latency · tri-rate 128/64/32GFC · SFP112 mechanical",
+            "R47A vs B vs C · system SerDes on 16×58G / 8×58G · FEC latency · tri-rate 128/64/32GFC · Search IP M-Series enablement & rule depth · SFP112 mechanical",
         ],
-        size=13,
+        size=12,
         space=2,
     )
     footer(s, page)
 
-    # ---- 9 Ask ----
+    # ---- 10 Ask ----
     page += 1
     s = blank_slide(prs)
     header_bar(s, "Ask · Next Step")
-    title_block(s, "Recommended decision", "Approve AGM039 R47 as the FC128 FPGA baseline")
+    title_block(s, "Recommended decision", "Approve AGM039 R47 + Altera Search IP as the FC128 baseline")
     add_rect(s, Inches(0.5), Inches(1.6), Inches(12.3), Inches(3.6), LIGHT_BG)
     add_rect(s, Inches(0.5), Inches(1.6), Inches(0.12), Inches(3.6), ACCENT)
     add_bullets(
@@ -554,11 +638,12 @@ def build(out_path: Path):
         [
             "Baseline device: Agilex™ 7 M-Series AGM039, package family R47",
             "I/O plan: 8×112G client (128GFC) + 16×58G system + 8×58G secondary",
-            "Immediate next step: joint architecture workshop to freeze SKU and system SerDes",
-            "PoC exit criteria: multi-port link-up, FEC clean, BER evidence on client and system sides",
+            "Lookup fabric: Altera Search IP (TCAM / BCAM / MBL) for zoning, ACL, VSAN, DID-SID",
+            "Next step: architecture workshop — freeze SKU, system SerDes, and lookup table sizing",
+            "PoC exit: multi-port link-up, FEC clean, BER evidence, sample classify path",
         ],
-        size=16,
-        space=10,
+        size=15,
+        space=8,
     )
     add_text_box(
         s,
