@@ -8,11 +8,15 @@
 //     (LowPwrAllowRequestHW, SquelchMethodSelect) are left as the module
 //     set them.
 //   * select page 10h and read-modify-write byte 130 bit 0, OutputDisableTx
-//     for lane 1. Other bits in that byte are preserved.
+//     for lane 1, then byte 132 bit 0, OutputSquelchForceTx. Other bits in
+//     those bytes are preserved.
 //   * on that same page, read-modify-write byte 128 bit 0 (DPDeinit for
 //     lane 1). Clearing it lets a ModuleReady module bring the data path up.
-//   * select page 11h and read byte 128. Bits [3:0] are the lane 1 data
-//     path state. DPActivated is 4h.
+//   * write page 10h byte 145 when the staged AppSel byte changes, then a
+//     one-byte write of bit 0 at byte 143 when apply_pulse is set. Byte 143
+//     is write-only.
+//   * select page 11h and read the lane 1 data path state, output status,
+//     ConfigStatus, the active AppSel, and DPInitPending.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -29,7 +33,10 @@ module fc_cmis_host #(
   input  logic        low_pwr_sw,
   input  logic        sw_reset_pulse,
   input  logic        tx_disable,
+  input  logic        tx_squelch,
   input  logic        dp_deinit,
+  input  logic [7:0]  staged_appsel,
+  input  logic        apply_pulse,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -38,9 +45,17 @@ module fc_cmis_host #(
   output logic        armed,
   output logic        low_pwr_rb,
   output logic        tx_disable_rb,
+  output logic        tx_squelch_rb,
   output logic [3:0]  dp_state,
   output logic        dp_deinit_rb,
   output logic        dp_activated,
+  output logic [3:0]  config_status,
+  output logic [7:0]  active_appsel,
+  output logic        dp_init_pend,
+  output logic        out_status_rx,
+  output logic        out_status_tx,
+  output logic        dp_flag,
+  output logic        dp_valid,
   output logic [7:0]  ident,
   output logic [7:0]  rev,
   output logic [2:0]  mod_state,
@@ -60,17 +75,28 @@ module fc_cmis_host #(
   `include "fc_cmis.vh"
 
   localparam int GAPW = (GAP < 1) ? 1 : GAP;
-  localparam [3:0] OP_RD26  = 4'd0;
-  localparam [3:0] OP_WR26  = 4'd1;
-  localparam [3:0] OP_PG    = 4'd2;
-  localparam [3:0] OP_RD130 = 4'd3;
-  localparam [3:0] OP_WR130 = 4'd4;
-  localparam [3:0] OP_POLL  = 4'd5;
-  localparam [3:0] OP_DP_PG = 4'd6;
-  localparam [3:0] OP_DP_RD = 4'd7;
-  localparam [3:0] OP_DP_WR = 4'd8;
-  localparam [3:0] OP_ST_PG = 4'd9;
-  localparam [3:0] OP_ST_RD = 4'd10;
+  localparam [4:0] OP_RD26   = 5'd0;
+  localparam [4:0] OP_WR26   = 5'd1;
+  localparam [4:0] OP_PG     = 5'd2;
+  localparam [4:0] OP_RD130  = 5'd3;
+  localparam [4:0] OP_WR130  = 5'd4;
+  localparam [4:0] OP_POLL   = 5'd5;
+  localparam [4:0] OP_DP_PG  = 5'd6;
+  localparam [4:0] OP_DP_RD  = 5'd7;
+  localparam [4:0] OP_DP_WR  = 5'd8;
+  localparam [4:0] OP_ST_PG  = 5'd9;
+  localparam [4:0] OP_ST_RD  = 5'd10;
+  localparam [4:0] OP_SQ_PG  = 5'd11;
+  localparam [4:0] OP_SQ_RD  = 5'd12;
+  localparam [4:0] OP_SQ_WR  = 5'd13;
+  localparam [4:0] OP_AS_PG  = 5'd14;
+  localparam [4:0] OP_AS_RD  = 5'd15;
+  localparam [4:0] OP_AS_WR  = 5'd16;
+  localparam [4:0] OP_AP_PG  = 5'd17;
+  localparam [4:0] OP_AP_WR  = 5'd18;
+  localparam [4:0] OP_ST_OUT = 5'd19;
+  localparam [4:0] OP_ST_CFG = 5'd20;
+  localparam [4:0] OP_ST_PND = 5'd21;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -78,9 +104,10 @@ module fc_cmis_host #(
   logic        rx_valid;
   logic [4:0]  rx_index;
   logic [7:0]  cap [0:31];
-  logic [3:0]  op;
+  logic [4:0]  op;
   logic        launch, inflight, wait_gap;
-  logic        ctrl_ok, tx_ok, dp_ok, st_fresh, sw_pend;
+  logic        ctrl_ok, tx_ok, sq_ok, dp_ok, as_ok, st_fresh, sw_pend, ap_pend;
+  logic [7:0]  as_rb;
   logic [15:0] gapcnt;
 
   fc_i2c_master #(.DIV(DIV), .DEV(CMIS_DEV)) u_i2c (
@@ -100,15 +127,9 @@ module fc_cmis_host #(
     end
   endfunction
 
-  function automatic [7:0] merge_tx(input [7:0] old, input logic dis);
+  function automatic [7:0] merge_bit0(input [7:0] old, input logic bit0);
     begin
-      merge_tx = (old & 8'hFE) | (dis ? 8'h01 : 8'h00);
-    end
-  endfunction
-
-  function automatic [7:0] merge_dp(input [7:0] old, input logic hold);
-    begin
-      merge_dp = (old & 8'hFE) | (hold ? 8'h01 : 8'h00);
+      merge_bit0 = (old & 8'hFE) | (bit0 ? 8'h01 : 8'h00);
     end
   endfunction
 
@@ -131,17 +152,29 @@ module fc_cmis_host #(
       wait_gap  <= 1'b0;
       ctrl_ok   <= 1'b0;
       tx_ok     <= 1'b0;
+      sq_ok     <= 1'b0;
       dp_ok     <= 1'b0;
+      as_ok     <= 1'b0;
+      as_rb     <= 8'h00;
       st_fresh  <= 1'b0;
       sw_pend   <= 1'b0;
+      ap_pend   <= 1'b0;
       gapcnt    <= 16'd0;
       present   <= 1'b0;
       nack      <= 1'b0;
       low_pwr_rb <= 1'b0;
       tx_disable_rb <= 1'b0;
+      tx_squelch_rb <= 1'b0;
       dp_state     <= CMIS_DP_DEACT;
       dp_deinit_rb <= 1'b1;
       dp_activated <= 1'b0;
+      config_status <= CMIS_CFG_NONE;
+      active_appsel <= 8'h00;
+      dp_init_pend  <= 1'b0;
+      out_status_rx <= 1'b0;
+      out_status_tx <= 1'b0;
+      dp_flag       <= 1'b0;
+      dp_valid      <= 1'b0;
       ident     <= 8'h00;
       rev       <= 8'h00;
       mod_state <= 3'd0;
@@ -158,6 +191,8 @@ module fc_cmis_host #(
 
       if (sw_reset_pulse)
         sw_pend <= 1'b1;
+      if (apply_pulse)
+        ap_pend <= 1'b1;
 
       cmd_valid <= 1'b0;
       if (launch && cmd_ready) begin
@@ -171,10 +206,19 @@ module fc_cmis_host #(
           present  <= 1'b0;
           ctrl_ok  <= 1'b0;
           tx_ok    <= 1'b0;
+          sq_ok    <= 1'b0;
           dp_ok    <= 1'b0;
+          as_ok    <= 1'b0;
           st_fresh <= 1'b0;
           dp_state <= CMIS_DP_DEACT;
           dp_activated <= 1'b0;
+          config_status <= CMIS_CFG_NONE;
+          active_appsel <= 8'h00;
+          dp_init_pend  <= 1'b0;
+          out_status_rx <= 1'b0;
+          out_status_tx <= 1'b0;
+          dp_flag       <= 1'b0;
+          dp_valid      <= 1'b0;
           wait_gap <= 1'b1;
           gapcnt   <= GAPW[15:0];
         end else begin
@@ -210,13 +254,37 @@ module fc_cmis_host #(
               op        <= OP_WR130;
               cmd_write <= 1'b1;
               cmd_addr  <= CMIS_TXDIS;
-              cmd_wdata <= merge_tx(cap[0], tx_disable);
+              cmd_wdata <= merge_bit0(cap[0], tx_disable);
               cmd_rlen  <= 6'd1;
               launch    <= 1'b1;
             end
             OP_WR130: begin
               tx_disable_rb <= tx_disable;
               tx_ok         <= 1'b1;
+            end
+            OP_SQ_PG: begin
+              op        <= OP_SQ_RD;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_SQFORCE;
+              cmd_rlen  <= 6'd1;
+              launch    <= 1'b1;
+            end
+            OP_SQ_RD: begin
+              if (cap[0][0] == tx_squelch) begin
+                tx_squelch_rb <= tx_squelch;
+                sq_ok         <= 1'b1;
+              end else begin
+                op        <= OP_SQ_WR;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_SQFORCE;
+                cmd_wdata <= merge_bit0(cap[0], tx_squelch);
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_SQ_WR: begin
+              tx_squelch_rb <= tx_squelch;
+              sq_ok         <= 1'b1;
             end
             OP_DP_PG: begin
               op        <= OP_DP_RD;
@@ -233,7 +301,7 @@ module fc_cmis_host #(
                 op        <= OP_DP_WR;
                 cmd_write <= 1'b1;
                 cmd_addr  <= CMIS_DPDEINIT;
-                cmd_wdata <= merge_dp(cap[0], dp_deinit);
+                cmd_wdata <= merge_bit0(cap[0], dp_deinit);
                 cmd_rlen  <= 6'd1;
                 launch    <= 1'b1;
               end
@@ -241,6 +309,42 @@ module fc_cmis_host #(
             OP_DP_WR: begin
               dp_deinit_rb <= dp_deinit;
               dp_ok        <= 1'b1;
+            end
+            OP_AS_PG: begin
+              op        <= OP_AS_RD;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_SCS0;
+              cmd_rlen  <= 6'd1;
+              launch    <= 1'b1;
+            end
+            OP_AS_RD: begin
+              if (cap[0] == staged_appsel) begin
+                as_rb <= staged_appsel;
+                as_ok <= 1'b1;
+              end else begin
+                op        <= OP_AS_WR;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_SCS0;
+                cmd_wdata <= staged_appsel;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_AS_WR: begin
+              as_rb <= staged_appsel;
+              as_ok <= 1'b1;
+            end
+            OP_AP_PG: begin
+              op        <= OP_AP_WR;
+              cmd_write <= 1'b1;
+              cmd_addr  <= CMIS_APPLY;
+              cmd_wdata <= 8'h01;
+              cmd_rlen  <= 6'd1;
+              launch    <= 1'b1;
+            end
+            OP_AP_WR: begin
+              if (!apply_pulse)
+                ap_pend <= 1'b0;
             end
             OP_ST_PG: begin
               op        <= OP_ST_RD;
@@ -252,6 +356,34 @@ module fc_cmis_host #(
             OP_ST_RD: begin
               dp_state     <= cap[0][3:0];
               dp_activated <= (cap[0][3:0] == CMIS_DP_ACT);
+              op        <= OP_ST_OUT;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_OUTRX;
+              cmd_rlen  <= 6'd3;
+              launch    <= 1'b1;
+            end
+            OP_ST_OUT: begin
+              out_status_rx <= cap[0][0];
+              out_status_tx <= cap[1][0];
+              dp_flag       <= cap[2][0];
+              op        <= OP_ST_CFG;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_CFGSTAT;
+              cmd_rlen  <= 6'd5;
+              launch    <= 1'b1;
+            end
+            OP_ST_CFG: begin
+              config_status <= cap[0][3:0];
+              active_appsel <= cap[4];
+              op        <= OP_ST_PND;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_DPPEND;
+              cmd_rlen  <= 6'd1;
+              launch    <= 1'b1;
+            end
+            OP_ST_PND: begin
+              dp_init_pend <= cap[0][0];
+              dp_valid     <= 1'b1;
               st_fresh     <= 1'b1;
             end
             OP_POLL: begin
@@ -279,10 +411,19 @@ module fc_cmis_host #(
             present <= 1'b0;
             ctrl_ok <= 1'b0;
             tx_ok   <= 1'b0;
+            sq_ok   <= 1'b0;
             dp_ok   <= 1'b0;
+            as_ok   <= 1'b0;
             st_fresh <= 1'b0;
             dp_state <= CMIS_DP_DEACT;
             dp_activated <= 1'b0;
+            config_status <= CMIS_CFG_NONE;
+            active_appsel <= 8'h00;
+            dp_init_pend  <= 1'b0;
+            out_status_rx <= 1'b0;
+            out_status_tx <= 1'b0;
+            dp_flag       <= 1'b0;
+            dp_valid      <= 1'b0;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -302,8 +443,29 @@ module fc_cmis_host #(
           cmd_wdata <= CMIS_LANE_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
+        end else if (!sq_ok || (tx_squelch != tx_squelch_rb)) begin
+          op        <= OP_SQ_PG;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
         end else if (!dp_ok || (dp_deinit != dp_deinit_rb)) begin
           op        <= OP_DP_PG;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!as_ok || (staged_appsel != as_rb)) begin
+          op        <= OP_AS_PG;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (ap_pend) begin
+          op        <= OP_AP_PG;
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_LANE_PAGE;

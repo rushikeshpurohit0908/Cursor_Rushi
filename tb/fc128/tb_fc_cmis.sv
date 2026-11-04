@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 // CMIS 5.0 host against a behavioral SFP112: power-up, low power, software
-// reset, lane-1 OutputDisableTx, the data path, module fault, and an absent module.
+// reset, lane-1 OutputDisableTx, the data path, forced squelch, staged
+// AppSel, module fault, and an absent module.
 module tb_fc_cmis;
   `include "fc_cmis.vh"
 
@@ -12,7 +13,10 @@ module tb_fc_cmis;
   logic low_pwr_sw = 0;
   logic sw_pulse = 0;
   logic tx_disable = 0;
+  logic tx_squelch = 0;
   logic dp_deinit = 0;
+  logic [7:0] staged = 8'h10;
+  logic apply_p = 0;
   logic mod_prs_n = 0;
   logic lpmode = 0;
   logic reset_n = 1;
@@ -20,9 +24,11 @@ module tb_fc_cmis;
   logic [15:0] temp_s16 = 16'h2880;
   logic [15:0] vcc_u16 = 16'h80E8;
 
-  logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, dp_deinit_rb, dp_act;
+  logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb;
+  logic dp_deinit_rb, dp_act, dp_pend, out_rx, out_tx, dp_flag_h, dp_valid;
   logic [7:0] ident, rev, flag0, flag1, flag2, flag3, txdis_byte, dpdeinit_byte;
-  logic [3:0] dp_rb, slave_dp;
+  logic [7:0] active_h, active_s, squelch_byte;
+  logic [3:0] dp_rb, slave_dp, cfg_h, cfg_s;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state;
   logic [15:0] temp_rb, vcc_rb;
@@ -34,11 +40,16 @@ module tb_fc_cmis;
     .clk(clk), .rst_n(rst_n),
     .poll_en(poll_en), .low_pwr_sw(low_pwr_sw),
     .sw_reset_pulse(sw_pulse), .tx_disable(tx_disable),
-    .dp_deinit(dp_deinit),
+    .tx_squelch(tx_squelch), .dp_deinit(dp_deinit),
+    .staged_appsel(staged), .apply_pulse(apply_p),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
+    .tx_squelch_rb(tx_squelch_rb),
     .dp_state(dp_rb), .dp_deinit_rb(dp_deinit_rb), .dp_activated(dp_act),
+    .config_status(cfg_h), .active_appsel(active_h),
+    .dp_init_pend(dp_pend), .out_status_rx(out_rx), .out_status_tx(out_tx),
+    .dp_flag(dp_flag_h), .dp_valid(dp_valid),
     .ident(ident), .rev(rev), .mod_state(mod_state),
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
@@ -52,7 +63,10 @@ module tb_fc_cmis;
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
-    .dp_state(slave_dp), .dpdeinit_byte(dpdeinit_byte)
+    .dp_state(slave_dp), .dpdeinit_byte(dpdeinit_byte),
+    .config_status(cfg_s), .active_appsel(active_s),
+    .dp_init_pend(), .out_status_rx(), .out_status_tx(),
+    .dp_flag(), .squelch_byte(squelch_byte)
   );
 
   integer errors = 0;
@@ -208,6 +222,151 @@ module tb_fc_cmis;
       errors = errors + 1;
     end
 
+    dp_deinit = 0;
+    begin : dp_back
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (dp_act && slave_dp == CMIS_DP_ACT && out_tx && out_rx &&
+            active_h == CMIS_APP_128 && active_s == CMIS_APP_128 &&
+            cfg_h == CMIS_CFG_NONE && squelch_byte == 8'hA0 && dp_valid && !busy)
+          disable dp_back;
+      end
+      $display("FAIL dp default host %h slave %h act %h cfg %h sq %h tx %b rx %b",
+               dp_rb, slave_dp, active_h, cfg_h, squelch_byte, out_tx, out_rx);
+      errors = errors + 1;
+    end
+    if (mod.mem[86] !== CMIS_H_128 || mod.mem[87] !== CMIS_M_128 ||
+        mod.mem[90] !== CMIS_H_64  || mod.mem[91] !== CMIS_M_64 ||
+        mod.mem[94] !== CMIS_H_32  || mod.mem[95] !== CMIS_M_32 ||
+        mod.mem[88] !== CMIS_LANES11 || mod.mem[89] !== CMIS_LANE1 ||
+        mod.mem[2][6] !== 1'b0) begin
+      $display("FAIL app ad %h %h %h %h step %b",
+               mod.mem[86], mod.mem[87], mod.mem[90], mod.mem[94], mod.mem[2][6]);
+      errors = errors + 1;
+    end
+
+    tx_squelch = 1;
+    begin : sq_on
+      integer k;
+      reg saw_flag;
+      saw_flag = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.dp_flag)
+          saw_flag = 1;
+        if (saw_flag && dp_rb == CMIS_DP_INITD && slave_dp == CMIS_DP_INITD &&
+            tx_squelch_rb && !out_tx && out_rx && squelch_byte == 8'hA1 && !busy)
+          disable sq_on;
+      end
+      $display("FAIL squelch on st %h byte %h tx %b rx %b flag %b",
+               dp_rb, squelch_byte, out_tx, out_rx, saw_flag);
+      errors = errors + 1;
+    end
+    tx_squelch = 0;
+    begin : sq_off
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (dp_act && slave_dp == CMIS_DP_ACT && !tx_squelch_rb &&
+            out_tx && squelch_byte == 8'hA0 && !busy)
+          disable sq_off;
+      end
+      $display("FAIL squelch off st %h byte %h tx %b", dp_rb, squelch_byte, out_tx);
+      errors = errors + 1;
+    end
+
+    staged = 8'h20;
+    @(negedge clk);
+    apply_p = 1;
+    @(negedge clk);
+    apply_p = 0;
+    begin : app_ok
+      integer k;
+      reg saw_busy, saw_pend, saw_down;
+      saw_busy = 0;
+      saw_pend = 0;
+      saw_down = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (cfg_s == CMIS_CFG_BUSY)
+          saw_busy = 1;
+        if (mod.dp_init_pend)
+          saw_pend = 1;
+        if (saw_pend && slave_dp == CMIS_DP_DEACT)
+          saw_down = 1;
+        if (saw_busy && saw_pend && saw_down && cfg_h == CMIS_CFG_OK &&
+            active_h == 8'h20 && active_s == 8'h20 && dp_act &&
+            slave_dp == CMIS_DP_ACT && !busy)
+          disable app_ok;
+      end
+      $display("FAIL appsel 64G cfg %h/%h act %h/%h busy %b pend %b down %b dp %h",
+               cfg_h, cfg_s, active_h, active_s, saw_busy, saw_pend, saw_down, slave_dp);
+      errors = errors + 1;
+    end
+
+    staged = 8'h12;
+    @(negedge clk);
+    apply_p = 1;
+    @(negedge clk);
+    apply_p = 0;
+    begin : app_dp
+      integer k;
+      reg left;
+      left = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (slave_dp != CMIS_DP_ACT && slave_dp != CMIS_DP_TXON &&
+            slave_dp != CMIS_DP_TXOFF && slave_dp != CMIS_DP_INITD)
+          left = 1;
+        if (cfg_h == CMIS_CFG_DP && active_h == 8'h20 && active_s == 8'h20 &&
+            dp_act && !left && !busy)
+          disable app_dp;
+      end
+      $display("FAIL bad dpid cfg %h act %h left %b dp %h",
+               cfg_h, active_h, left, slave_dp);
+      errors = errors + 1;
+    end
+
+    staged = 8'h70;
+    @(negedge clk);
+    apply_p = 1;
+    @(negedge clk);
+    apply_p = 0;
+    begin : app_bad
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (cfg_h == CMIS_CFG_APP && active_h == 8'h20 && active_s == 8'h20 &&
+            dp_act && !busy)
+          disable app_bad;
+      end
+      $display("FAIL bad appsel cfg %h act %h", cfg_h, active_h);
+      errors = errors + 1;
+    end
+
+    staged = 8'h11;
+    @(negedge clk);
+    apply_p = 1;
+    @(negedge clk);
+    apply_p = 0;
+    begin : app_ex
+      integer k;
+      reg saw_down;
+      saw_down = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (slave_dp == CMIS_DP_DEACT)
+          saw_down = 1;
+        if (saw_down && cfg_h == CMIS_CFG_OK && active_h == 8'h11 &&
+            active_s == 8'h11 && dp_act && !busy)
+          disable app_ex;
+      end
+      $display("FAIL explicit cfg %h act %h down %b dp %h",
+               cfg_h, active_h, saw_down, slave_dp);
+      errors = errors + 1;
+    end
+
     if (errors == 0)
       $display("PASS tb_fc_cmis");
     else
@@ -216,7 +375,7 @@ module tb_fc_cmis;
   end
 
   initial begin
-    for (guard = 0; guard < 3000000; guard = guard + 1)
+    for (guard = 0; guard < 8000000; guard = guard + 1)
       @(posedge clk);
     $display("FAIL tb_fc_cmis timeout");
     $finish;

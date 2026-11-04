@@ -4,10 +4,21 @@
 // SFF-8024 code for an SFP/SFP+ (including SFP112) that speaks CMIS.
 // Multi-byte monitors are big-endian: byte 14 is the temperature MSB,
 // in units of 1/256 C, and byte 16 is the supply MSB, in units of 100 uV.
-// ModuleState occupies byte 3 bits [3:1]. OutputDisableTx for media lane 1
-// is page 10h byte 130 bit 0. DPDeinit for host lane 1 is page 10h byte 128
-// bit 0. Page 11h byte 128 bits [3:0] are that lane's data path state.
-// Lanes in the map are numbered from 1.
+// ModuleState occupies byte 3 bits [3:1]. Byte 2 bit 6 is SteppedConfigOnly
+// and stays clear, so ApplyDPInit may reconfigure an active lane.
+// OutputDisableTx for media lane 1 is page 10h byte 130 bit 0.
+// OutputSquelchForceTx is page 10h byte 132 bit 0. DPDeinit for host lane 1
+// is page 10h byte 128 bit 0. Page 10h byte 143 bit 0 is the write-only
+// ApplyDPInit trigger. Page 10h byte 145 is staged AppSel for lane 1:
+// AppSelCode [7:4], DataPathID [3:1], ExplicitControl [0].
+// Page 11h byte 128 bits [3:0] are that lane's data path state. Byte 132
+// bit 0 is OutputStatusRx, byte 133 bit 0 is OutputStatusTx, and byte 134
+// bit 0 is DPStateChangedFlag (clear on read, steady states only).
+// Byte 202 bits [3:0] are ConfigStatus. Byte 206 is the active AppSel.
+// Byte 235 bit 0 is DPInitPending. Lanes in the map are numbered from 1.
+// Lower bytes 86-97 advertise three one-lane applications. Host interface
+// IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
+// codes in Table 4-7: 128GFC-SM, 64GFC-SM, and 32GFC-SM.
 
 localparam [6:0] CMIS_DEV      = 7'h50;
 localparam [7:0] CMIS_ID_SFP   = 8'h20;
@@ -23,7 +34,28 @@ localparam [7:0] CMIS_LANE_PAGE = 8'h10;
 localparam [7:0] CMIS_STAT_PAGE = 8'h11;
 localparam [7:0] CMIS_DPDEINIT = 8'd128;
 localparam [7:0] CMIS_TXDIS    = 8'd130;
+localparam [7:0] CMIS_SQFORCE  = 8'd132;
+localparam [7:0] CMIS_APPLY    = 8'd143;
+localparam [7:0] CMIS_SCS0     = 8'd145;
+localparam [7:0] CMIS_OUTRX    = 8'd132;
+localparam [7:0] CMIS_OUTTX    = 8'd133;
+localparam [7:0] CMIS_DPFLAG   = 8'd134;
+localparam [7:0] CMIS_CFGSTAT  = 8'd202;
+localparam [7:0] CMIS_ACS0     = 8'd206;
+localparam [7:0] CMIS_DPPEND   = 8'd235;
+localparam [7:0] CMIS_APP_BASE = 8'd86;
 localparam [5:0] CMIS_POLL_N   = 6'd18;
+// SFF-8024 host electrical IDs and single-mode media IDs.
+localparam [7:0] CMIS_H_128    = 8'h4A;
+localparam [7:0] CMIS_H_64     = 8'h29;
+localparam [7:0] CMIS_H_32     = 8'h28;
+localparam [7:0] CMIS_M_128    = 8'h45;
+localparam [7:0] CMIS_M_64     = 8'h23;
+localparam [7:0] CMIS_M_32     = 8'h22;
+localparam [7:0] CMIS_LANES11  = 8'h11;
+localparam [7:0] CMIS_LANE1    = 8'h01;
+// AppSel 1, DataPathID 0 (lane 1), module signal-integrity defaults.
+localparam [7:0] CMIS_APP_128  = 8'h10;
 // CMIS 5.0 data path state encodings.
 localparam [3:0] CMIS_DP_DEACT  = 4'h1;
 localparam [3:0] CMIS_DP_INIT   = 4'h2;
@@ -32,3 +64,10 @@ localparam [3:0] CMIS_DP_ACT    = 4'h4;
 localparam [3:0] CMIS_DP_TXON   = 4'h5;
 localparam [3:0] CMIS_DP_TXOFF  = 4'h6;
 localparam [3:0] CMIS_DP_INITD  = 4'h7;
+// ConfigStatus encodings, page 11h byte 202 bits [3:0].
+localparam [3:0] CMIS_CFG_NONE = 4'h0;
+localparam [3:0] CMIS_CFG_OK   = 4'h1;
+localparam [3:0] CMIS_CFG_REJ  = 4'h2;
+localparam [3:0] CMIS_CFG_APP  = 4'h3;
+localparam [3:0] CMIS_CFG_DP   = 4'h4;
+localparam [3:0] CMIS_CFG_BUSY = 4'hC;

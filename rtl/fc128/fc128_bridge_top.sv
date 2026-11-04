@@ -14,10 +14,13 @@
 // The frame RAM stays on RS(255,239). Ordered sets are in fc128_defs.vh.
 // Each client cage has a CMIS 5.0 two-wire host (fc_cmis_host). The CSR
 // window is 0x200 + 32*port. LPMode and ResetL are cage pins. Control bit 6
-// is DPDeinit for lane 1. Page 11h data-path state is at +0x14. The line
-// rate for that port is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC.
-// Bit 4 is set while that write is being applied. The link drops and
-// returns on the new rate; the gearbox is not switched in place.
+// is DPDeinit for lane 1, bit 7 pulses ApplyDPInit, and bit 8 is
+// OutputSquelchForceTx. Page 11h data-path state is at +0x14. The staged
+// AppSel byte is written at +0x1C; the read side returns that request, the
+// active AppSel, and ConfigStatus. The line rate for that port is at +0x18:
+// 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 is set while that write is
+// being applied. The link drops and returns on the new rate; the gearbox
+// is not switched in place.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -154,18 +157,29 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_lp_sw;
   logic [N_CLIENT-1:0]       cmis_lp_hw;
   logic [N_CLIENT-1:0]       cmis_txdis;
+  logic [N_CLIENT-1:0]       cmis_sq;
   logic [N_CLIENT-1:0]       cmis_dpdis;
   logic [N_CLIENT-1:0]       cmis_rstn;
   logic [N_CLIENT-1:0]       cmis_swrst;
+  logic [N_CLIENT-1:0]       cmis_apply;
+  logic [N_CLIENT-1:0][7:0]  cmis_appsel;
   logic [N_CLIENT-1:0]       cmis_busy;
   logic [N_CLIENT-1:0]       cmis_present;
   logic [N_CLIENT-1:0]       cmis_nack;
   logic [N_CLIENT-1:0]       cmis_armed;
   logic [N_CLIENT-1:0]       cmis_lp_rb;
   logic [N_CLIENT-1:0]       cmis_tx_rb;
+  logic [N_CLIENT-1:0]       cmis_sq_rb;
   logic [N_CLIENT-1:0][3:0]  cmis_dp_st;
   logic [N_CLIENT-1:0]       cmis_dp_rb;
   logic [N_CLIENT-1:0]       cmis_dp_act;
+  logic [N_CLIENT-1:0][3:0]  cmis_cfg;
+  logic [N_CLIENT-1:0][7:0]  cmis_act_app;
+  logic [N_CLIENT-1:0]       cmis_pend;
+  logic [N_CLIENT-1:0]       cmis_orx;
+  logic [N_CLIENT-1:0]       cmis_otx;
+  logic [N_CLIENT-1:0]       cmis_dpflag;
+  logic [N_CLIENT-1:0]       cmis_dpval;
   logic [N_CLIENT-1:0]       cmis_intd;
   logic [N_CLIENT-1:0][7:0]  cmis_id;
   logic [N_CLIENT-1:0][7:0]  cmis_rev;
@@ -177,6 +191,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][15:0] cmis_temp;
   logic [N_CLIENT-1:0][15:0] cmis_vcc;
   logic [N_CLIENT-1:0] swrst_w;
+  logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
   logic [N_CLIENT-1:0]      port_rate_busy;
 
@@ -270,7 +285,10 @@ module fc128_bridge_top #(
         .low_pwr_sw(cmis_lp_sw[gi]),
         .sw_reset_pulse(cmis_swrst[gi]),
         .tx_disable(cmis_txdis[gi]),
+        .tx_squelch(cmis_sq[gi]),
         .dp_deinit(cmis_dpdis[gi]),
+        .staged_appsel(cmis_appsel[gi]),
+        .apply_pulse(cmis_apply[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -278,9 +296,17 @@ module fc128_bridge_top #(
         .armed(cmis_armed[gi]),
         .low_pwr_rb(cmis_lp_rb[gi]),
         .tx_disable_rb(cmis_tx_rb[gi]),
+        .tx_squelch_rb(cmis_sq_rb[gi]),
         .dp_state(cmis_dp_st[gi]),
         .dp_deinit_rb(cmis_dp_rb[gi]),
         .dp_activated(cmis_dp_act[gi]),
+        .config_status(cmis_cfg[gi]),
+        .active_appsel(cmis_act_app[gi]),
+        .dp_init_pend(cmis_pend[gi]),
+        .out_status_rx(cmis_orx[gi]),
+        .out_status_tx(cmis_otx[gi]),
+        .dp_flag(cmis_dpflag[gi]),
+        .dp_valid(cmis_dpval[gi]),
         .ident(cmis_id[gi]),
         .rev(cmis_rev[gi]),
         .mod_state(cmis_st[gi]),
@@ -319,17 +345,25 @@ module fc128_bridge_top #(
       cmis_lp_sw <= '0;
       cmis_lp_hw <= '0;
       cmis_txdis <= '0;
+      cmis_sq    <= '0;
       cmis_dpdis <= '0;
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
+      cmis_apply <= '0;
+      cmis_appsel <= {N_CLIENT{CMIS_APP_128}};
       port_rate  <= '0;
     end else begin
       credit_load <= 1'b0;
       swrst_w = '0;
+      apply_w = '0;
       if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd0 &&
           csr_addr[7:5] < N_CLIENT && csr_wdata[2])
         swrst_w[csr_addr[7:5]] = 1'b1;
+      if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd0 &&
+          csr_addr[7:5] < N_CLIENT && csr_wdata[7])
+        apply_w[csr_addr[7:5]] = 1'b1;
       cmis_swrst <= swrst_w;
+      cmis_apply <= apply_w;
       if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd0 &&
           csr_addr[7:5] < N_CLIENT) begin
         cmis_poll[csr_addr[7:5]]  <= csr_wdata[0];
@@ -338,6 +372,10 @@ module fc128_bridge_top #(
         cmis_lp_hw[csr_addr[7:5]] <= csr_wdata[4];
         cmis_rstn[csr_addr[7:5]]  <= csr_wdata[5];
         cmis_dpdis[csr_addr[7:5]] <= csr_wdata[6];
+        cmis_sq[csr_addr[7:5]]    <= csr_wdata[8];
+      end else if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd7 &&
+                   csr_addr[7:5] < N_CLIENT) begin
+        cmis_appsel[csr_addr[7:5]] <= csr_wdata[7:0];
       end else if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd6 &&
                    csr_addr[7:5] < N_CLIENT) begin
         port_rate[csr_addr[7:5]] <= (csr_wdata[1:0] == 2'b11) ? 2'b00 : csr_wdata[1:0];
@@ -398,7 +436,8 @@ module fc128_bridge_top #(
           endcase
         end else if (csr_addr[11:8] == 4'h2 && csr_addr[7:5] < N_CLIENT) begin
           case (csr_addr[4:2])
-            3'd0: rdata_mux = {25'h0, cmis_dpdis[port_idx], cmis_rstn[port_idx],
+            3'd0: rdata_mux = {23'h0, cmis_sq[port_idx], 1'b0,
+                               cmis_dpdis[port_idx], cmis_rstn[port_idx],
                                cmis_lp_hw[port_idx], cmis_txdis[port_idx], 1'b0,
                                cmis_lp_sw[port_idx], cmis_poll[port_idx]};
             3'd1: rdata_mux = {3'h0, cmis_tx_rb[port_idx], cmis_lp_rb[port_idx],
@@ -411,10 +450,14 @@ module fc128_bridge_top #(
             3'd2: rdata_mux = {cmis_vcc[port_idx], cmis_temp[port_idx]};
             3'd3: rdata_mux = {cmis_f3[port_idx], cmis_f2[port_idx],
                                cmis_f1[port_idx], cmis_f0[port_idx]};
-            3'd4: rdata_mux = {29'h0, cmis_armed[port_idx], cmis_tx_rb[port_idx],
-                               cmis_lp_rb[port_idx]};
-            3'd5: rdata_mux = {26'h0, cmis_dp_act[port_idx], cmis_dp_rb[port_idx],
-                               cmis_dp_st[port_idx]};
+            3'd4: rdata_mux = {28'h0, cmis_sq_rb[port_idx], cmis_armed[port_idx],
+                               cmis_tx_rb[port_idx], cmis_lp_rb[port_idx]};
+            3'd5: rdata_mux = {21'h0, cmis_dpval[port_idx], cmis_pend[port_idx],
+                               cmis_dpflag[port_idx], cmis_otx[port_idx],
+                               cmis_orx[port_idx], cmis_dp_act[port_idx],
+                               cmis_dp_rb[port_idx], cmis_dp_st[port_idx]};
+            3'd7: rdata_mux = {12'h0, cmis_cfg[port_idx], cmis_act_app[port_idx],
+                               cmis_appsel[port_idx]};
             3'd6: rdata_mux = {27'h0, port_rate_busy[port_idx], 2'b00,
                                port_rate[port_idx]};
             default: rdata_mux = 32'h0;
