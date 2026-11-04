@@ -1,6 +1,9 @@
 // One direction of the bridge: block stream in, frame buffer, optional RS-FEC,
 // block stream out. Credit and R_RDY are sidebands so the parent can cross
 // them between the client link and the system link.
+//
+// rx_link_up gates frame accept on this pipe's ingress. tx_link_up gates
+// frame and R_RDY transmit; until then the pipe sources tx_os (NOS/OLS/LR/LRR/Idle).
 module fc_pipe #(
   parameter int MAX_PAY = 128
 ) (
@@ -9,6 +12,9 @@ module fc_pipe #(
   input  logic        port_en,
   input  logic        fec_en,
   input  logic        locked,
+  input  logic        rx_link_up,
+  input  logic        tx_link_up,
+  input  logic [7:0]  tx_os,
 
   input  logic        rx_valid,
   output logic        rx_ready,
@@ -118,7 +124,9 @@ module fc_pipe #(
   end
   assign fec_rdata = mem[mem_raddr];
 
-  always_ff @(posedge clk or negedge rst_n) begin
+  // Synchronous RAM. Reset is not on this sensitivity list: an async reset
+  // edge with no reset clause is a write, and it blocks RAM inference.
+  always_ff @(posedge clk) begin
     if (fec_we)
       mem[fec_addr] <= fec_wdata;
     else if (byte_we)
@@ -203,10 +211,15 @@ module fc_pipe #(
         enc_armed   <= 1'b0;
         enc_started <= 1'b0;
       end else begin
+        // A lost block lock aborts a partial receive. A frame that already
+        // passed CRC (pending) is kept so transmit can finish after recovery.
+        if (!locked) begin
+          rx_state <= RX_IDLE;
+        end else begin
         case (rx_state)
           RX_IDLE: begin
             if (rx_valid && rx_ready && locked && !pending) begin
-              if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_SOF) begin
+              if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_SOF && rx_link_up) begin
                 if (rx_data[31:16] >= 16'd1 && rx_data[31:16] <= MAX_PAY) begin
                   k_len    <= rx_data[23:16];
                   use_fec  <= fec_en;
@@ -216,7 +229,7 @@ module fc_pipe #(
                 end else begin
                   rx_state <= RX_DROP;
                 end
-              end else if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_RRDY) begin
+              end else if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_RRDY && rx_link_up) begin
                 saw_r_rdy <= 1'b1;
               end
             end
@@ -315,11 +328,17 @@ module fc_pipe #(
 
           default: rx_state <= RX_IDLE;
         endcase
+        end
 
         case (tx_state)
           TS_FLOW: begin
             if (!tx_valid || tx_fire) begin
-              if (owed_v != 8'h00 && !in_frame) begin
+              if (!tx_link_up && !in_frame) begin
+                tx_valid <= 1'b1;
+                tx_sync  <= FC_SYNC_CTRL;
+                tx_data  <= {56'h0, tx_os};
+                tx_state <= TS_FLOW;
+              end else if (owed_v != 8'h00 && !in_frame) begin
                 tx_valid  <= 1'b1;
                 tx_sync   <= FC_SYNC_CTRL;
                 tx_data   <= {56'h0, FC_RRDY};
@@ -412,7 +431,7 @@ module fc_pipe #(
           default: tx_state <= TS_FLOW;
         endcase
 
-        if (rx_state == RX_FEC_GO)
+        if (locked && rx_state == RX_FEC_GO)
           fec_start <= 1'b1;
         else if (enc_armed && !enc_started) begin
           fec_start   <= 1'b1;

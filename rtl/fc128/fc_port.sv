@@ -2,6 +2,12 @@
 // Client PMA is one lane. The system side is a bonded pair (the 1:2 gearbox).
 // Frame payload crosses client -> system and system -> client. R_RDY and
 // buffer-to-buffer credit stay on the link that owns them.
+//
+// Each physical link has its own fc_link_sm. The client machine watches the
+// client ingress and chooses the primitive the system-to-client pipe sends.
+// The system machine watches the merged system ingress and chooses the
+// primitive the client-to-system pipe sends. Frames stay off a link until
+// that machine reaches Active.
 module fc_port #(
   parameter int MAX_PAY        = 128,
   parameter int FIFO_DEPTH     = 32,
@@ -45,7 +51,12 @@ module fc_port #(
   output logic [31:0] stat_tx_frames,
   output logic [31:0] stat_crc_err,
   output logic [31:0] stat_fec_corr,
-  output logic [31:0] stat_fec_fail
+  output logic [31:0] stat_fec_fail,
+  output logic        client_link_up,
+  output logic        system_link_up,
+  output logic [2:0]  client_ls,
+  output logic [2:0]  system_ls,
+  output logic        sys_locked
 );
   logic        c_rx_ready, c_tx_valid, c_tx_ready;
   logic [1:0]  c_rx_sync, c_tx_sync;
@@ -71,8 +82,25 @@ module fc_port #(
   logic [1:0]  merge_sync;
   logic [63:0] merge_data;
   logic [1:0]  sys_lock;
+  logic [1:0]  sys_lock_meta;
+  logic [1:0]  sys_lock_sync;
   logic [1:0][1:0]  sys_front_sync;
   logic [1:0][63:0] sys_front_data;
+  logic [7:0]  client_tx_os;
+  logic [7:0]  system_tx_os;
+
+  // System block lock is produced on clk_system. The return pipe and the
+  // system link machine both sit on clk_client.
+  always_ff @(posedge clk_client or negedge rst_client_n) begin
+    if (!rst_client_n) begin
+      sys_lock_meta <= 2'b00;
+      sys_lock_sync <= 2'b00;
+    end else begin
+      sys_lock_meta <= sys_lock;
+      sys_lock_sync <= sys_lock_meta;
+    end
+  end
+  assign sys_locked = sys_lock_sync[0] & sys_lock_sync[1];
 
   fc_rx_front u_client_rx (
     .clk           (clk_client),
@@ -107,6 +135,9 @@ module fc_port #(
     .port_en         (port_en),
     .fec_en          (fec_en),
     .locked          (client_lock),
+    .rx_link_up      (client_link_up),
+    .tx_link_up      (system_link_up),
+    .tx_os           (system_tx_os),
     .rx_valid        (client_rx_valid),
     .rx_ready        (c_rx_ready),
     .rx_sync         (c_rx_sync),
@@ -196,7 +227,10 @@ module fc_port #(
     .rst_n           (rst_client_n),
     .port_en         (port_en),
     .fec_en          (fec_en),
-    .locked          (sys_lock[0] && sys_lock[1]),
+    .locked          (sys_locked),
+    .rx_link_up      (system_link_up),
+    .tx_link_up      (client_link_up),
+    .tx_os           (client_tx_os),
     .rx_valid        (merge_valid),
     .rx_ready        (merge_ready),
     .rx_sync         (merge_sync),
@@ -219,6 +253,32 @@ module fc_port #(
   assign c_tx_valid = s_pipe_tx_valid;
   assign c_tx_sync  = s_pipe_tx_sync;
   assign c_tx_data  = s_pipe_tx_data;
+
+  fc_link_sm u_client_link (
+    .clk        (clk_client),
+    .rst_n      (rst_client_n),
+    .port_en    (port_en),
+    .locked     (client_lock),
+    .rx_fire    (client_rx_valid && c_rx_ready),
+    .rx_sync    (c_rx_sync),
+    .rx_data    (c_rx_data),
+    .link_up    (client_link_up),
+    .tx_os      (client_tx_os),
+    .state_code (client_ls)
+  );
+
+  fc_link_sm u_system_link (
+    .clk        (clk_client),
+    .rst_n      (rst_client_n),
+    .port_en    (port_en),
+    .locked     (sys_locked),
+    .rx_fire    (merge_valid && merge_ready),
+    .rx_sync    (merge_sync),
+    .rx_data    (merge_data),
+    .link_up    (system_link_up),
+    .tx_os      (system_tx_os),
+    .state_code (system_ls)
+  );
 
   always_comb begin
     cli_next = {1'b0, cli_cr};
