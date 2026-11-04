@@ -36,6 +36,9 @@ module tb_fc128_bridge;
   logic cmis_sda_s;
   logic [15:0] cmis_temp = 16'h2880;
   logic [15:0] cmis_vcc = 16'h80E8;
+  logic [15:0] cmis_opt_tx = 16'h2710;
+  logic [15:0] cmis_bias = 16'h4E20;
+  logic [15:0] cmis_opt_rx = 16'h1388;
 
   assign cmis_scl_i[0] = ~cmis_scl_oe[0];
   assign cmis_sda_i[0] = ~(cmis_sda_oe[0] | cmis_sda_s);
@@ -75,6 +78,7 @@ module tb_fc128_bridge;
     .scl_i(cmis_scl_i[0]), .sda_i(cmis_sda_i[0]), .sda_oe(cmis_sda_s),
     .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
+    .opt_tx_u16(cmis_opt_tx), .bias_tx_u16(cmis_bias), .opt_rx_u16(cmis_opt_rx),
     .tx_fail(sfp_tx_fail), .los_tx(sfp_los_tx), .lol_tx(sfp_lol_tx),
     .los_rx(sfp_los_rx), .lol_rx(sfp_lol_rx), .int_n(sfp_int_n),
     .mod_state(), .txdis_byte(), .flag_state(),
@@ -413,6 +417,16 @@ module tb_fc128_bridge;
       $display("FAIL cmis port1 %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h300, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis power reset %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h320, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis power port1 %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h014, 32'hA5A5_1234);
     csr_read_t(12'h014, rdw);
     if (rdw !== 32'hA5A5_1234) begin
@@ -686,6 +700,38 @@ module tb_fc128_bridge;
     csr_read_t(12'h208, rdw);
     if (rdw !== 32'h80E8_2880) begin
       $display("FAIL cmis monitors %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h300, rdw);
+    if (rdw !== 32'h1388_2710) begin
+      $display("FAIL cmis optical %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h304, rdw);
+    if (rdw !== 32'h0000_4E20) begin
+      $display("FAIL cmis bias %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h300, rdw);
+    if (rdw !== 32'h1388_2710) begin
+      $display("FAIL cmis optical held %h", rdw);
+      errors = errors + 1;
+    end
+    cmis_opt_tx = 16'h00C8;
+    cmis_bias = 16'h2710;
+    cmis_opt_rx = 16'h0000;
+    begin : cmis_lane_mon
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h300, rdw);
+        if (rdw == 32'h0000_00C8) begin
+          csr_read_t(12'h304, rdw);
+          if (rdw == 32'h0000_2710)
+            disable cmis_lane_mon;
+        end
+      end
+      $display("FAIL cmis lane monitors %h", rdw);
       errors = errors + 1;
     end
     csr_read_t(12'h21C, rdw);

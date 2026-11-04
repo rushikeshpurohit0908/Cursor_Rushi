@@ -14,7 +14,10 @@
 // DPDeactivated. Lane-1 FailureFlagTx, LOSFlagTx, CDRLOLFlagTx, LOSFlagRx,
 // and CDRLOLFlagRx latch while the matching input is set and clear on read.
 // Page 10h mask bit 0 gates each one out of the interrupt. IntL is active
-// low. Temperature is signed 1/256 C at bytes 14-15. Supply is
+// low. Page 11h bytes 154-155, 170-171, and 186-187 report lane-1
+// OpticalPowerTx, LaserBiasTx, and OpticalPowerRx. Power counts 0.1 uW
+// and bias counts 2 uA. The MSB is the lower address. A read leaves them
+// unchanged. Temperature is signed 1/256 C at bytes 14-15. Supply is
 // unsigned 100 uV at bytes 16-17. The slave does not stretch SCL. sda_oe
 // drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
@@ -31,6 +34,9 @@ module cmis_sfp_slave #(
   input  logic        force_fault,
   input  logic [15:0] temp_s16,
   input  logic [15:0] vcc_u16,
+  input  logic [15:0] opt_tx_u16,
+  input  logic [15:0] bias_tx_u16,
+  input  logic [15:0] opt_rx_u16,
   input  logic        tx_fail,
   input  logic        los_tx,
   input  logic        lol_tx,
@@ -190,6 +196,18 @@ module cmis_sfp_slave #(
         peek = {7'h0, los_rx_f};
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_LOLRX)
         peek = {7'h0, lol_rx_f};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_OPT_TX)
+        peek = opt_tx_u16[15:8];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_OPT_TX + 8'd1)
+        peek = opt_tx_u16[7:0];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_BIAS_TX)
+        peek = bias_tx_u16[15:8];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_BIAS_TX + 8'd1)
+        peek = bias_tx_u16[7:0];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_OPT_RX)
+        peek = opt_rx_u16[15:8];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_OPT_RX + 8'd1)
+        peek = opt_rx_u16[7:0];
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_CFGSTAT)
         peek = {4'h0, cfg_q};
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_ACS0)

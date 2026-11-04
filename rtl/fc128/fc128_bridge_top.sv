@@ -18,7 +18,10 @@
 // OutputSquelchForceTx. Bits [13:9] are the lane-1 flag masks (1 masks
 // Tx failure, Tx LOS, Tx CDR LOL, Rx LOS, and Rx CDR LOL). Page 11h
 // data-path state is at +0x14, and bits [15:11] of that register are the
-// clear-on-read copies of those flags. The staged
+// clear-on-read copies of those flags. Lane-1 optical power and laser bias
+// are read from page 11h on that same pass. `0x300 + 32*port` returns
+// `{OpticalPowerRx, OpticalPowerTx}` and `0x304 + 32*port` returns
+// LaserBiasTx. Power counts 0.1 uW and bias counts 2 uA. The staged
 // AppSel byte is written at +0x1C; the read side returns that request, the
 // active AppSel, and ConfigStatus. The line rate for that port is at +0x18:
 // 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 is set while that write is
@@ -203,6 +206,9 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][7:0]  cmis_f3;
   logic [N_CLIENT-1:0][15:0] cmis_temp;
   logic [N_CLIENT-1:0][15:0] cmis_vcc;
+  logic [N_CLIENT-1:0][15:0] cmis_opt_tx;
+  logic [N_CLIENT-1:0][15:0] cmis_bias;
+  logic [N_CLIENT-1:0][15:0] cmis_opt_rx;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
@@ -340,6 +346,9 @@ module fc128_bridge_top #(
         .flag3(cmis_f3[gi]),
         .temp_s16(cmis_temp[gi]),
         .vcc_u16(cmis_vcc[gi]),
+        .opt_tx_u16(cmis_opt_tx[gi]),
+        .bias_tx_u16(cmis_bias[gi]),
+        .opt_rx_u16(cmis_opt_rx[gi]),
         .scl_oe(cmis_scl_oe[gi]),
         .sda_oe(cmis_sda_oe[gi]),
         .scl_i(cmis_scl_i[gi]),
@@ -498,6 +507,12 @@ module fc128_bridge_top #(
                                cmis_appsel[port_idx]};
             3'd6: rdata_mux = {27'h0, port_rate_busy[port_idx], 2'b00,
                                port_rate[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h3 && csr_addr[7:5] < N_CLIENT) begin
+          case (csr_addr[4:2])
+            3'd0: rdata_mux = {cmis_opt_rx[port_idx], cmis_opt_tx[port_idx]};
+            3'd1: rdata_mux = {16'h0, cmis_bias[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

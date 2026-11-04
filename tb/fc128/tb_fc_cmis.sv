@@ -33,6 +33,9 @@ module tb_fc_cmis;
   logic force_fault = 0;
   logic [15:0] temp_s16 = 16'h2880;
   logic [15:0] vcc_u16 = 16'h80E8;
+  logic [15:0] opt_tx_u16 = 16'h2710;
+  logic [15:0] bias_tx_u16 = 16'h4E20;
+  logic [15:0] opt_rx_u16 = 16'h1388;
 
   logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb;
   logic dp_deinit_rb, dp_act, dp_pend, out_rx, out_tx, dp_flag_h, dp_valid;
@@ -42,7 +45,7 @@ module tb_fc_cmis;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state, int_n;
   logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
-  logic [15:0] temp_rb, vcc_rb;
+  logic [15:0] temp_rb, vcc_rb, opt_tx_rb, bias_rb, opt_rx_rb;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
   wire sda_i = ~(sda_oe | sda_slave);
@@ -71,6 +74,7 @@ module tb_fc_cmis;
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
     .temp_s16(temp_rb), .vcc_u16(vcc_rb),
+    .opt_tx_u16(opt_tx_rb), .bias_tx_u16(bias_rb), .opt_rx_u16(opt_rx_rb),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -79,6 +83,7 @@ module tb_fc_cmis;
     .scl_i(scl_i), .sda_i(sda_i), .sda_oe(sda_slave),
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
+    .opt_tx_u16(opt_tx_u16), .bias_tx_u16(bias_tx_u16), .opt_rx_u16(opt_rx_u16),
     .tx_fail(tx_fail), .los_tx(los_tx), .lol_tx(lol_tx),
     .los_rx(los_rx), .lol_rx(lol_rx), .int_n(int_n),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
@@ -489,6 +494,51 @@ module tb_fc_cmis;
           disable mk_back;
       end
       $display("FAIL mask restore %h", mod.p10[CMIS_MSK_LOSRX]);
+      errors = errors + 1;
+    end
+
+    begin : mon_hold
+      integer k;
+      reg saw_busy;
+      saw_busy = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (busy)
+          saw_busy = 1;
+        if (saw_busy && !busy && opt_tx_rb == 16'h2710 &&
+            bias_rb == 16'h4E20 && opt_rx_rb == 16'h1388)
+          disable mon_hold;
+      end
+      $display("FAIL monitors %h %h %h", opt_tx_rb, bias_rb, opt_rx_rb);
+      errors = errors + 1;
+    end
+    begin : mon_again
+      integer k;
+      reg saw_busy;
+      saw_busy = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (busy)
+          saw_busy = 1;
+        if (saw_busy && !busy && opt_tx_rb == 16'h2710 &&
+            bias_rb == 16'h4E20 && opt_rx_rb == 16'h1388)
+          disable mon_again;
+      end
+      $display("FAIL monitors cleared %h %h %h", opt_tx_rb, bias_rb, opt_rx_rb);
+      errors = errors + 1;
+    end
+    opt_tx_u16 = 16'h00C8;
+    bias_tx_u16 = 16'h2710;
+    opt_rx_u16 = 16'h0000;
+    begin : mon_new
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && opt_tx_rb == 16'h00C8 && bias_rb == 16'h2710 &&
+            opt_rx_rb == 16'h0000)
+          disable mon_new;
+      end
+      $display("FAIL monitors update %h %h %h", opt_tx_rb, bias_rb, opt_rx_rb);
       errors = errors + 1;
     end
 
