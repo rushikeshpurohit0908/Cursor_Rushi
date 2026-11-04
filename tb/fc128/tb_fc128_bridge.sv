@@ -680,6 +680,39 @@ module tb_fc128_bridge;
       $display("FAIL cmis monitors %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h21C, rdw);
+    if (rdw !== 32'h0000_1010) begin
+      $display("FAIL cmis appsel default %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h21C, 32'h0000_0030);
+    csr_write_t(12'h200, 32'h0000_00A1);
+    begin : cmis_app
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h21C, rdw);
+        if (rdw[19:16] == 4'h1 && rdw[15:8] == 8'h30) begin
+          csr_read_t(12'h214, rdw);
+          if (rdw[10] && rdw[5] && rdw[3:0] == 4'h4)
+            disable cmis_app;
+        end
+      end
+      $display("FAIL cmis apply %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0121);
+    begin : cmis_sq
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[3:0] == 4'h7 && !rdw[7] && rdw[6])
+          disable cmis_sq;
+      end
+      $display("FAIL cmis squelch %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h200, 32'h0000_0023);
     begin : cmis_lp
       integer k;
