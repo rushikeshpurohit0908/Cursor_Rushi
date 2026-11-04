@@ -27,9 +27,16 @@
 // the fixed threshold; a low flag is the monitor below it. The flag
 // stays set while that comparison is true and holds a pulse until the
 // byte is read. Page 10h bytes 218-225 and 228-231 bit 0 are those
-// masks and power up at 1. An unmasked flag is part of IntL. Byte 2
-// bit 6, SteppedConfigOnly, stays clear. Lower bytes 86-97 advertise
-// three one-lane applications. Lanes in the map are numbered from 1.
+// masks and power up at 1. An unmasked flag is part of IntL. Lower
+// byte 9 is the module monitor flags: temperature in [7:4] and supply
+// in [3:0], each high-alarm, low-alarm, high-warning, low-warning.
+// Temperature is a signed compare. Supply is unsigned. A value equal
+// to the threshold is not a flag. The flag stays set while the
+// comparison is true and holds a pulse until byte 9 is read. Lower
+// byte 32 is the matching mask and powers up at FFh. An unmasked flag
+// is part of IntL. Byte 2 bit 6, SteppedConfigOnly, stays clear.
+// Lower bytes 86-97 advertise three one-lane applications. Lanes in
+// the map are numbered from 1.
 
 localparam [6:0] CMIS_DEV       = 7'h50;
 localparam [7:0] CMIS_ID_SFP    = 8'h20;
@@ -102,6 +109,20 @@ localparam [15:0] CMIS_RX_HA    = 16'd10000;
 localparam [15:0] CMIS_RX_HW    = 16'd5000;
 localparam [15:0] CMIS_RX_LW    = 16'd100;
 localparam [15:0] CMIS_RX_LA    = 16'd32;
+// Module monitors, page 02h bytes 128-143. Temperature is signed 1/256 C:
+// 75 C, -5 C, 70 C, 0 C. Supply is 100 uV: 3.6 V, 3.0 V, 3.465 V, 3.135 V.
+// Order is high alarm, low alarm, high warning, low warning.
+// 40.5 C and 3.300 V sit inside both windows.
+localparam [7:0]  CMIS_MONFLG   = 8'd9;
+localparam [7:0]  CMIS_MONMSK   = 8'd32;
+localparam [15:0] CMIS_TEMP_HA  = 16'd19200;
+localparam [15:0] CMIS_TEMP_LA  = 16'hFB00;
+localparam [15:0] CMIS_TEMP_HW  = 16'd17920;
+localparam [15:0] CMIS_TEMP_LW  = 16'd0;
+localparam [15:0] CMIS_VCC_HA   = 16'd36000;
+localparam [15:0] CMIS_VCC_LA   = 16'd30000;
+localparam [15:0] CMIS_VCC_HW   = 16'd34650;
+localparam [15:0] CMIS_VCC_LW   = 16'd31350;
 localparam [7:0] CMIS_CFGSTAT   = 8'd202;
 localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;

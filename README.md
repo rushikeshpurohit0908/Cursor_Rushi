@@ -58,7 +58,7 @@ The top-level CSR (client clock, word addresses) is:
 | `0x200 + 32*port` | CMIS control: poll, LowPwrRequestSW, SoftwareReset pulse, OutputDisableTx1, LPMode, ResetL deasserted, DPDeinit1, ApplyDPInit pulse, OutputSquelchForceTx, lane-1 flag masks `[13:9]` (reset to 1) |
 | `0x204 + 32*port` | CMIS status: identifier, revision, module state, present, monitors valid |
 | `0x208 + 32*port` | CMIS `{VccMonVoltage[15:0], TempMonValue[15:0]}` |
-| `0x20C + 32*port` | CMIS module flags, bytes 11..8 |
+| `0x20C + 32*port` | CMIS module flags, bytes 11..8. Byte 9 (`[15:8]`) is `{Temp HA, Temp LA, Temp HW, Temp LW, Vcc HA, Vcc LA, Vcc HW, Vcc LW}` |
 | `0x210 + 32*port` | CMIS readback: bit 3 OutputSquelchForceTx, bit 2 controls armed, bit 1 OutputDisableTx, bit 0 LowPwrRequestSW |
 | `0x214 + 32*port` | CMIS lane 1: `[15:11]` CDRLOLFlagRx, LOSFlagRx, CDRLOLFlagTx, LOSFlagTx, FailureFlagTx, then DPInitPending, valid, DPDeinit readback, DPStateChangedFlag, OutputStatusTx, OutputStatusRx, DPState[3:0] |
 | `0x218 + 32*port` | Line rate `[1:0]`: `0` 128GFC, `1` 64GFC, `2` 32GFC. Bit 4 is set while a new rate is applied |
@@ -67,3 +67,4 @@ The top-level CSR (client clock, word addresses) is:
 | `0x304 + 32*port` | Lane 1 LaserBiasTx `[15:0]`, 2 uA |
 | `0x308 + 32*port` | Lane 1 optical flags `[11:0]`: `{Rx LW, Rx HW, Rx LA, Rx HA, bias LW, bias HW, bias LA, bias HA, Tx LW, Tx HW, Tx LA, Tx HA}` |
 | `0x30C + 32*port` | Lane 1 optical flag masks `[11:0]`, same packing, reset `12'hFFF` |
+| `0x310 + 32*port` | Module monitor mask `[7:0]`, same packing as byte 9, reset `8'hFF` |

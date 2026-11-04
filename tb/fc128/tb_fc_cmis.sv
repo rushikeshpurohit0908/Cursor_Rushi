@@ -20,6 +20,7 @@ module tb_fc_cmis;
   logic apply_pulse = 0;
   logic [4:0] lane_mask = 5'h1F;
   logic [11:0] opt_mask = 12'hFFF;
+  logic [7:0] mod_mask = 8'hFF;
   logic fail_tx = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -61,6 +62,7 @@ module tb_fc_cmis;
     .staged_appsel(staged), .apply_pulse(apply_pulse),
     .flag_mask(lane_mask),
     .opt_mask(opt_mask),
+    .mod_mask(mod_mask),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -558,6 +560,129 @@ module tb_fc_cmis;
           disable mon_pulse;
       end
       $display("FAIL rx pulse saw %b flags %h rx %h", saw, opt_flags, opt_rx_rb);
+      errors = errors + 1;
+    end
+
+    // 40.5 C and 3.300 V sit inside the module windows. Byte 32 powers up
+    // at FF, so a later alarm stays off IntL until the mask opens.
+    begin : mod_quiet
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (temp_rb == 16'h2880 && vcc_rb == 16'h80E8 && flag1 == 8'h00 &&
+            int_n && mod.mem[CMIS_MONMSK] == 8'hFF && !busy)
+          disable mod_quiet;
+      end
+      $display("FAIL module quiet flags %h mask %h temp %h vcc %h",
+               flag1, mod.mem[CMIS_MONMSK], temp_rb, vcc_rb);
+      errors = errors + 1;
+    end
+    // Equal to the high-alarm threshold is not a high alarm. It is still
+    // above the high-warning threshold.
+    temp_s16 = CMIS_TEMP_HA;
+    begin : mod_eq
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (temp_rb == CMIS_TEMP_HA && flag1 == 8'h20 && int_n && !busy)
+          disable mod_eq;
+      end
+      $display("FAIL temp equal HA flags %h temp %h", flag1, temp_rb);
+      errors = errors + 1;
+    end
+    temp_s16 = CMIS_TEMP_HA + 16'd1;
+    begin : mod_ha
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (temp_rb == CMIS_TEMP_HA + 16'd1 && flag1 == 8'hA0 && int_n &&
+            mod.mem[CMIS_MONMSK] == 8'hFF && !busy)
+          disable mod_ha;
+      end
+      $display("FAIL temp high alarm flags %h mask %h", flag1, mod.mem[CMIS_MONMSK]);
+      errors = errors + 1;
+    end
+    // Unmask temperature high alarm only. The other seven mask bits stay 1.
+    mod_mask = 8'h7F;
+    begin : mod_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag1[7] && !flag1[6] && !int_n && !int_deasserted &&
+            mod.mem[CMIS_MONMSK] == 8'h7F && !busy)
+          disable mod_int;
+      end
+      $display("FAIL temp alarm IntL flags %h int %b mask %h",
+               flag1, int_n, mod.mem[CMIS_MONMSK]);
+      errors = errors + 1;
+    end
+    temp_s16 = 16'h2880;
+    mod_mask = 8'hFF;
+    begin : mod_rest
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag1 == 8'h00 && temp_rb == 16'h2880 && int_n && int_deasserted &&
+            mod.mem[CMIS_MONMSK] == 8'hFF && !busy)
+          disable mod_rest;
+      end
+      $display("FAIL temp restore flags %h int %b mask %h",
+               flag1, int_n, mod.mem[CMIS_MONMSK]);
+      errors = errors + 1;
+    end
+    // Equal to the low-alarm threshold is not a low alarm. It is still
+    // below the low-warning threshold.
+    vcc_u16 = CMIS_VCC_LA;
+    begin : mod_vcc
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (vcc_rb == CMIS_VCC_LA && flag1 == 8'h01 && int_n && !busy)
+          disable mod_vcc;
+      end
+      $display("FAIL vcc equal LA flags %h vcc %h", flag1, vcc_rb);
+      errors = errors + 1;
+    end
+    vcc_u16 = CMIS_VCC_LA - 16'd1;
+    begin : mod_vcc_la
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (vcc_rb == CMIS_VCC_LA - 16'd1 && flag1 == 8'h05 && !busy)
+          disable mod_vcc_la;
+      end
+      $display("FAIL vcc low alarm flags %h vcc %h", flag1, vcc_rb);
+      errors = errors + 1;
+    end
+    vcc_u16 = 16'h80E8;
+    begin : mod_vcc_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag1 == 8'h00 && vcc_rb == 16'h80E8 && !busy)
+          disable mod_vcc_clr;
+      end
+      $display("FAIL vcc restore flags %h", flag1);
+      errors = errors + 1;
+    end
+    // One step below -5 C sets both low flags. The same bits read as a
+    // large unsigned value, so an unsigned compare would raise a high
+    // alarm instead. The pulse is held until byte 9 is read.
+    temp_s16 = CMIS_TEMP_LA - 16'd1;
+    repeat (30) @(posedge clk);
+    temp_s16 = 16'h2880;
+    begin : mod_pulse
+      integer k;
+      reg saw;
+      saw = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag1[6] && flag1[4] && !flag1[7] && !flag1[5])
+          saw = 1;
+        if (saw && flag1 == 8'h00 && temp_rb == 16'h2880 && !busy)
+          disable mod_pulse;
+      end
+      $display("FAIL temp pulse saw %b flags %h temp %h", saw, flag1, temp_rb);
       errors = errors + 1;
     end
 

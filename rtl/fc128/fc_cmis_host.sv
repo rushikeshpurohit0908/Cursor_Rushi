@@ -25,8 +25,11 @@
 //   * select page 10h and read-modify-write bit 0 of the twelve
 //     optical/laser mask bytes (218-225 and 228-231) so they follow
 //     opt_mask. Bits [7:1] of those bytes are left as the module set them.
+//   * read-modify-write lower byte 32 so the module temperature and
+//     supply masks follow mod_mask. The whole byte is those eight masks.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
-//     state, flags, temperature, and supply.
+//     state, flags, temperature, and supply. Byte 9 is the temperature
+//     and supply threshold flags. That read is unchanged.
 //
 // LPMode and ResetL are cage pins driven by the bridge CSR, not by this
 // state machine. A NACK, or ModPrsL high, drops present and the next poll
@@ -52,6 +55,9 @@ module fc_cmis_host #(
   // bias HW, bias LA, bias HA, Tx LW, Tx HW, Tx LA, Tx HA}. A 1 masks
   // that flag off IntL.
   input  logic [11:0] opt_mask,
+  // Byte 9 / byte 32: {Temp HA, Temp LA, Temp HW, Temp LW,
+  // Vcc HA, Vcc LA, Vcc HW, Vcc LW}. A 1 masks that flag off IntL.
+  input  logic [7:0]  mod_mask,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -124,6 +130,8 @@ module fc_cmis_host #(
   localparam [4:0] OP_RDOPT = 5'd23;
   localparam [4:0] OP_RDOM  = 5'd24;
   localparam [4:0] OP_WROM  = 5'd25;
+  localparam [4:0] OP_RDMM  = 5'd26;
+  localparam [4:0] OP_WRMM  = 5'd27;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -140,6 +148,8 @@ module fc_cmis_host #(
   logic        omask_ok;
   logic [11:0] omask_rb;
   logic [3:0]  omask_i;
+  logic        mmask_ok;
+  logic [7:0]  mmask_rb;
   logic [7:0]  opt_lo;
   logic [15:0] gapcnt;
 
@@ -249,6 +259,8 @@ module fc_cmis_host #(
       omask_ok  <= 1'b0;
       omask_rb  <= 12'h000;
       omask_i   <= 4'd0;
+      mmask_ok  <= 1'b0;
+      mmask_rb  <= 8'h00;
       opt_lo    <= 8'h00;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
@@ -314,6 +326,7 @@ module fc_cmis_host #(
           mask_ok   <= 1'b0;
           mask_arm  <= 1'b0;
           omask_ok  <= 1'b0;
+          mmask_ok  <= 1'b0;
           lane_valid <= 1'b0;
           opt_tx_u16  <= 16'h0000;
           bias_tx_u16 <= 16'h0000;
@@ -595,6 +608,23 @@ module fc_cmis_host #(
                 launch    <= 1'b1;
               end
             end
+            OP_RDMM: begin
+              if (cap[0] == mod_mask) begin
+                mmask_rb <= mod_mask;
+                mmask_ok <= 1'b1;
+              end else begin
+                op        <= OP_WRMM;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_MONMSK;
+                cmd_wdata <= mod_mask;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_WRMM: begin
+              mmask_rb <= mod_mask;
+              mmask_ok <= 1'b1;
+            end
             OP_POLL: begin
               ident          <= cap[0];
               rev            <= cap[1];
@@ -630,6 +660,7 @@ module fc_cmis_host #(
             mask_ok    <= 1'b0;
             mask_arm   <= 1'b0;
             omask_ok   <= 1'b0;
+            mmask_ok   <= 1'b0;
             lane_valid <= 1'b0;
             opt_tx_u16  <= 16'h0000;
             bias_tx_u16 <= 16'h0000;
@@ -687,14 +718,6 @@ module fc_cmis_host #(
           cmd_wdata <= CMIS_LANE_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
-        end else if (!lane_ok) begin
-          op        <= OP_PG;
-          nxt       <= OP_RD11;
-          cmd_write <= 1'b1;
-          cmd_addr  <= CMIS_PAGE;
-          cmd_wdata <= CMIS_STAT_PAGE;
-          cmd_rlen  <= 6'd1;
-          launch    <= 1'b1;
         end else if (mask_arm && (!mask_ok || (flag_mask != mask_rb))) begin
           mask_i    <= 3'd0;
           op        <= OP_PG;
@@ -711,6 +734,23 @@ module fc_cmis_host #(
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (mask_arm && (!mmask_ok || (mod_mask != mmask_rb))) begin
+          // Lower byte 32, after the page 10h masks and before the
+          // armed status pass. mask_arm stays clear until the first
+          // poll, so the first page 11h read is still bytes 128-134.
+          op        <= OP_RDMM;
+          cmd_write <= 1'b0;
+          cmd_addr  <= CMIS_MONMSK;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!lane_ok) begin
+          op        <= OP_PG;
+          nxt       <= OP_RD11;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_STAT_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else begin
