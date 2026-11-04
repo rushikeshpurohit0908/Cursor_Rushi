@@ -9,6 +9,9 @@ module fc_rx_front #(
   input  logic        clk,
   input  logic        rst_n,
   input  logic        scrambler_en,
+  // Packed 257-bit beats use sync 00 as a group marker. Count those
+  // toward block lock; the recovered header is checked after decode.
+  input  logic        sync_relax,
   input  logic        valid,
   input  logic        ready,
   input  logic [1:0]  sync_in,
@@ -37,7 +40,8 @@ module fc_rx_front #(
   );
 
   assign step    = valid && ready;
-  assign sync_ok = (sync_in == FC_SYNC_DATA) || (sync_in == FC_SYNC_CTRL);
+  assign sync_ok = sync_relax ||
+                   (sync_in == FC_SYNC_DATA) || (sync_in == FC_SYNC_CTRL);
 
   always_comb begin
       if (warm_cnt < WARMUP) begin

@@ -4,7 +4,9 @@
 // [7:0]. The bytes are the FC-FS / FC-PH transmission characters (K28.5 plus
 // three data characters), not an internal code. EOF has a second form for
 // positive beginning running disparity; both forms are recognized. The 64-bit
-// container is still this bridge's block, not a 256b/257b transcoder.
+// container is this bridge's block. CSR bit 5 packs four of them into a
+// Clause 119 256b/257b word on the system lanes (fc_xcode.vh). K28.5
+// restores as 0xBC.
 
 localparam [1:0] FC_SYNC_DATA = 2'b01;
 localparam [1:0] FC_SYNC_CTRL = 2'b10;

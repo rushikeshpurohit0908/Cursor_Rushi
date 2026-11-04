@@ -32,7 +32,7 @@ python3 scripts/build_cisco_fc128_proposal.py
 
 `rtl/fc128/` is the synthesizable bridge behind the proposal diagram. Hardened F-Tile PMA stays outside the RTL. Each client port is one 112.2G lane gearboxed onto two 58G system lanes (116G aggregate, about 3.3% above the line rate). The extra 8×58G bank mirrors the even lane of each pair in protect mode, or squelches.
 
-The pipeline on each port is block lock, a self-synchronizing x^58+x^39+1 scrambler, link initialization, store-and-forward FC frames with CRC-32, buffer-to-buffer credit and R_RDY, and an RS(255,239) FEC engine over GF(2^8). A control block carries the FC-FS ordered set in bits `[31:0]` (first character in `[7:0]`): Idle is `BC 95 B5 B5`, R_RDY is `BC 95 4A 4A`, and NOS / OLS / LR / LRR use their FC-FS sequences. Frames are transmitted as SOFi3 … EOFt. The receiver accepts the SOF family and both running-disparity forms of EOFt, EOFn, and EOFdt. EOFa and the invalid EOF delimiters discard the frame. The 64-bit container is this bridge's block code, not a 256b/257b transcoder. Link bring-up transmits NOS until block lock, then OLS, LR, LRR, and Idle. Active is that handshake, or a run of Idle from a peer that is already up. One NOS drops the link. Production FC-PI-8 FEC is an RS(544,514)-class code. `fc_rs_fec` is the block that code replaces. `scripts/gen_fc_rs_tables.py` is the reference codec and regenerates `rtl/fc128/fc_rs_tables.vh`. System-lane block lock crosses into the client clock through a two-flop synchronizer before it gates the return path.
+The pipeline on each port is block lock, a self-synchronizing x^58+x^39+1 scrambler, link initialization, store-and-forward FC frames with CRC-32, buffer-to-buffer credit and R_RDY, and an RS(255,239) FEC engine over GF(2^8). A control block carries the FC-FS ordered set in bits `[31:0]` (first character in `[7:0]`): Idle is `BC 95 B5 B5`, R_RDY is `BC 95 4A 4A`, and NOS / OLS / LR / LRR use their FC-FS sequences. Frames are transmitted as SOFi3 … EOFt. The receiver accepts the SOF family and both running-disparity forms of EOFt, EOFn, and EOFdt. EOFa and the invalid EOF delimiters discard the frame. The pipe's container is still this 66-bit block. Control bit 5 packs four of those blocks into one Clause 119 256b/257b word on the system gearbox; the omitted nibble of a K28.5 ordered set is restored as `0xBC`. Link bring-up transmits NOS until block lock, then OLS, LR, LRR, and Idle. Active is that handshake, or a run of Idle from a peer that is already up. One NOS drops the link. Production FC-PI-8 FEC is an RS(544,514)-class code. `fc_rs_fec` is the block that code replaces. `scripts/gen_fc_rs_tables.py` is the reference codec and regenerates `rtl/fc128/fc_rs_tables.vh`. System-lane block lock crosses into the client clock through a two-flop synchronizer before it gates the return path.
 
 Run the self-checking simulations with Icarus Verilog:
 
@@ -45,7 +45,7 @@ The top-level CSR (client clock, word addresses) is:
 | Offset | Register |
 |---|---|
 | `0x000` | ID `0xFC128039` |
-| `0x008` | Control: reset, system loopback, FEC, scrambler, secondary protect |
+| `0x008` | Control: reset, system loopback, FEC, scrambler, secondary protect, 256b/257b transcode |
 | `0x00C` | Client block-lock bits |
 | `0x010` | Port enable |
 | `0x018` | Load credits `{client[15:8], system[7:0]}` |
