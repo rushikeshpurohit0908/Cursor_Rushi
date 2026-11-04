@@ -9,4 +9,6 @@ fc_link_sm.sv
 fc_xcode_stream.sv
 fc_pipe.sv
 fc_port.sv
+fc_i2c_master.sv
+fc_cmis_host.sv
 fc128_bridge_top.sv

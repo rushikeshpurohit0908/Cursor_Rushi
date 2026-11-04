@@ -12,10 +12,14 @@
 // RS(544,514) over GF(2^10) is fc_rs544. CSR bit 6 attaches it to those
 // packed groups: twenty 257-bit words, then five sync-11 parity beats.
 // The frame RAM stays on RS(255,239). Ordered sets are in fc128_defs.vh.
+// Each client cage has a CMIS 5.0 two-wire host (fc_cmis_host). The CSR
+// window is 0x200 + 32*port. LPMode and ResetL are cage pins.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
-  parameter int DEFAULT_CREDIT = 8
+  parameter int DEFAULT_CREDIT = 8,
+  parameter int CMIS_DIV       = 4,
+  parameter int CMIS_GAP       = 32
 ) (
   input  logic clk_client,
   input  logic clk_system,
@@ -48,10 +52,21 @@ module fc128_bridge_top #(
 
   output logic [N_CLIENT-1:0]       sec_tx_valid,
   output logic [N_CLIENT-1:0][1:0]  sec_tx_sync,
-  output logic [N_CLIENT-1:0][63:0] sec_tx_data
+  output logic [N_CLIENT-1:0][63:0] sec_tx_data,
+
+  // Open-drain CMIS two-wire pads. oe is active-high drive-low.
+  output logic [N_CLIENT-1:0] cmis_scl_oe,
+  output logic [N_CLIENT-1:0] cmis_sda_oe,
+  input  logic [N_CLIENT-1:0] cmis_scl_i,
+  input  logic [N_CLIENT-1:0] cmis_sda_i,
+  input  logic [N_CLIENT-1:0] cmis_modprs_n,
+  input  logic [N_CLIENT-1:0] cmis_int_n,
+  output logic [N_CLIENT-1:0] cmis_lpmode,
+  output logic [N_CLIENT-1:0] cmis_reset_n
 );
   localparam [31:0] ID_WORD  = 32'hFC12_8039;
   localparam [31:0] VER_WORD = 32'h0001_0001;
+  `include "fc_cmis.vh"
 
   logic        sw_reset;
   logic        sys_loopback;
@@ -130,6 +145,30 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       p_sys_lock;
   logic [N_CLIENT-1:0][2:0]  p_client_ls;
   logic [N_CLIENT-1:0][2:0]  p_system_ls;
+
+  logic [N_CLIENT-1:0]       cmis_poll;
+  logic [N_CLIENT-1:0]       cmis_lp_sw;
+  logic [N_CLIENT-1:0]       cmis_lp_hw;
+  logic [N_CLIENT-1:0]       cmis_txdis;
+  logic [N_CLIENT-1:0]       cmis_rstn;
+  logic [N_CLIENT-1:0]       cmis_swrst;
+  logic [N_CLIENT-1:0]       cmis_busy;
+  logic [N_CLIENT-1:0]       cmis_present;
+  logic [N_CLIENT-1:0]       cmis_nack;
+  logic [N_CLIENT-1:0]       cmis_armed;
+  logic [N_CLIENT-1:0]       cmis_lp_rb;
+  logic [N_CLIENT-1:0]       cmis_tx_rb;
+  logic [N_CLIENT-1:0]       cmis_intd;
+  logic [N_CLIENT-1:0][7:0]  cmis_id;
+  logic [N_CLIENT-1:0][7:0]  cmis_rev;
+  logic [N_CLIENT-1:0][2:0]  cmis_st;
+  logic [N_CLIENT-1:0][7:0]  cmis_f0;
+  logic [N_CLIENT-1:0][7:0]  cmis_f1;
+  logic [N_CLIENT-1:0][7:0]  cmis_f2;
+  logic [N_CLIENT-1:0][7:0]  cmis_f3;
+  logic [N_CLIENT-1:0][15:0] cmis_temp;
+  logic [N_CLIENT-1:0][15:0] cmis_vcc;
+  logic [N_CLIENT-1:0] swrst_w;
 
   logic [2*N_CLIENT-1:0]       port_sys_rx_valid;
   logic [2*N_CLIENT-1:0]       port_sys_rx_ready;
@@ -211,6 +250,38 @@ module fc128_bridge_top #(
       assign sec_tx_valid[gi] = sec_protect_s ? port_sys_tx_valid[2*gi] : 1'b0;
       assign sec_tx_sync[gi]  = sec_protect_s ? port_sys_tx_sync[2*gi]  : 2'b00;
       assign sec_tx_data[gi]  = sec_protect_s ? port_sys_tx_data[2*gi]  : 64'h0;
+
+      fc_cmis_host #(.DIV(CMIS_DIV), .GAP(CMIS_GAP)) u_cmis (
+        .clk(clk_client),
+        .rst_n(rst_csr_n),
+        .poll_en(cmis_poll[gi]),
+        .low_pwr_sw(cmis_lp_sw[gi]),
+        .sw_reset_pulse(cmis_swrst[gi]),
+        .tx_disable(cmis_txdis[gi]),
+        .mod_prs_n(cmis_modprs_n[gi]),
+        .busy(cmis_busy[gi]),
+        .present(cmis_present[gi]),
+        .nack(cmis_nack[gi]),
+        .armed(cmis_armed[gi]),
+        .low_pwr_rb(cmis_lp_rb[gi]),
+        .tx_disable_rb(cmis_tx_rb[gi]),
+        .ident(cmis_id[gi]),
+        .rev(cmis_rev[gi]),
+        .mod_state(cmis_st[gi]),
+        .int_deasserted(cmis_intd[gi]),
+        .flag0(cmis_f0[gi]),
+        .flag1(cmis_f1[gi]),
+        .flag2(cmis_f2[gi]),
+        .flag3(cmis_f3[gi]),
+        .temp_s16(cmis_temp[gi]),
+        .vcc_u16(cmis_vcc[gi]),
+        .scl_oe(cmis_scl_oe[gi]),
+        .sda_oe(cmis_sda_oe[gi]),
+        .scl_i(cmis_scl_i[gi]),
+        .sda_i(cmis_sda_i[gi])
+      );
+      assign cmis_lpmode[gi]  = cmis_lp_hw[gi];
+      assign cmis_reset_n[gi] = cmis_rstn[gi];
     end
   endgenerate
 
@@ -228,9 +299,27 @@ module fc128_bridge_top #(
       credit_load   <= 1'b0;
       credit_cli_i  <= 8'(DEFAULT_CREDIT);
       credit_sys_i  <= 8'(DEFAULT_CREDIT);
+      cmis_poll  <= '0;
+      cmis_lp_sw <= '0;
+      cmis_lp_hw <= '0;
+      cmis_txdis <= '0;
+      cmis_rstn  <= {N_CLIENT{1'b1}};
+      cmis_swrst <= '0;
     end else begin
       credit_load <= 1'b0;
-      if (csr_write) begin
+      swrst_w = '0;
+      if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd0 &&
+          csr_addr[7:5] < N_CLIENT && csr_wdata[2])
+        swrst_w[csr_addr[7:5]] = 1'b1;
+      cmis_swrst <= swrst_w;
+      if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd0 &&
+          csr_addr[7:5] < N_CLIENT) begin
+        cmis_poll[csr_addr[7:5]]  <= csr_wdata[0];
+        cmis_lp_sw[csr_addr[7:5]] <= csr_wdata[1];
+        cmis_txdis[csr_addr[7:5]] <= csr_wdata[3];
+        cmis_lp_hw[csr_addr[7:5]] <= csr_wdata[4];
+        cmis_rstn[csr_addr[7:5]]  <= csr_wdata[5];
+      end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
             sw_reset     <= csr_wdata[0];
@@ -283,6 +372,25 @@ module fc128_bridge_top #(
             3'd6: rdata_mux = {16'h0, 2'b00, p_system_ls[port_idx], p_client_ls[port_idx],
                                6'h0, p_system_up[port_idx], p_client_up[port_idx]};
             3'd7: rdata_mux = {p_rs_fail[port_idx], p_rs_corr[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h2 && csr_addr[7:5] < N_CLIENT) begin
+          case (csr_addr[4:2])
+            3'd0: rdata_mux = {26'h0, cmis_rstn[port_idx], cmis_lp_hw[port_idx],
+                               cmis_txdis[port_idx], 1'b0, cmis_lp_sw[port_idx],
+                               cmis_poll[port_idx]};
+            3'd1: rdata_mux = {3'h0, cmis_tx_rb[port_idx], cmis_lp_rb[port_idx],
+                               (cmis_st[port_idx] == CMIS_ST_FLT),
+                               (cmis_st[port_idx] == CMIS_ST_RDY),
+                               cmis_int_n[port_idx], ~cmis_modprs_n[port_idx],
+                               cmis_busy[port_idx], cmis_nack[port_idx],
+                               cmis_present[port_idx], cmis_intd[port_idx],
+                               cmis_st[port_idx], cmis_rev[port_idx], cmis_id[port_idx]};
+            3'd2: rdata_mux = {cmis_vcc[port_idx], cmis_temp[port_idx]};
+            3'd3: rdata_mux = {cmis_f3[port_idx], cmis_f2[port_idx],
+                               cmis_f1[port_idx], cmis_f0[port_idx]};
+            3'd4: rdata_mux = {29'h0, cmis_armed[port_idx], cmis_tx_rb[port_idx],
+                               cmis_lp_rb[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

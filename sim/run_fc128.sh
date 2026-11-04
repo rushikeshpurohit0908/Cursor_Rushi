@@ -42,6 +42,12 @@ compile_run tb_fc_xcode \
   rtl/fc128/fc_xcode_stream.sv \
   tb/fc128/tb_fc_xcode.sv
 
+compile_run tb_fc_cmis \
+  rtl/fc128/fc_i2c_master.sv \
+  rtl/fc128/fc_cmis_host.sv \
+  tb/fc128/cmis_sfp_slave.sv \
+  tb/fc128/tb_fc_cmis.sv
+
 compile_run tb_fc_rs544_port \
   rtl/fc128/fc_scrambler.sv \
   rtl/fc128/fc_async_fifo.sv \
@@ -66,7 +72,10 @@ compile_run tb_fc128_bridge \
   rtl/fc128/fc_lane_pair.sv \
   rtl/fc128/fc_link_sm.sv \
   rtl/fc128/fc_xcode_stream.sv \
+  rtl/fc128/fc_i2c_master.sv \
+  rtl/fc128/fc_cmis_host.sv \
   rtl/fc128/fc_pipe.sv \
   rtl/fc128/fc_port.sv \
   rtl/fc128/fc128_bridge_top.sv \
+  tb/fc128/cmis_sfp_slave.sv \
   tb/fc128/tb_fc128_bridge.sv
