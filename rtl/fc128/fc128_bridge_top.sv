@@ -15,7 +15,8 @@
 // Each client cage has a CMIS 5.0 two-wire host (fc_cmis_host). The CSR
 // window is 0x200 + 32*port. LPMode and ResetL are cage pins. Lane 1
 // DPDeinit and ApplyDPInit are written on page 10h; page 11h is the
-// data-path state and lane status readback.
+// data-path state and lane status readback. The line rate for that port
+// is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -181,6 +182,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_lane_v;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
+  logic [N_CLIENT-1:0][1:0] port_rate;
 
   logic [2*N_CLIENT-1:0]       port_sys_rx_valid;
   logic [2*N_CLIENT-1:0]       port_sys_rx_ready;
@@ -221,6 +223,7 @@ module fc128_bridge_top #(
         .scrambler_en_s  (scrambler_en_s),
         .xcode_en        (xcode_en),
         .rs544_en        (rs544_en),
+        .rate            (port_rate[gi]),
         .credit_load     (credit_load),
         .credit_cli_i    (credit_cli_i),
         .credit_sys_i    (credit_sys_i),
@@ -328,6 +331,7 @@ module fc128_bridge_top #(
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
       cmis_apply <= '0;
+      port_rate  <= '0;
     end else begin
       credit_load <= 1'b0;
       swrst_w = '0;
@@ -348,6 +352,9 @@ module fc128_bridge_top #(
         cmis_lp_hw[csr_addr[7:5]] <= csr_wdata[4];
         cmis_rstn[csr_addr[7:5]]  <= csr_wdata[5];
         cmis_dpde[csr_addr[7:5]]  <= csr_wdata[6];
+      end else if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd6 &&
+                   csr_addr[7:5] < N_CLIENT) begin
+        port_rate[csr_addr[7:5]] <= (csr_wdata[1:0] == 2'b11) ? 2'b00 : csr_wdata[1:0];
       end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
@@ -427,6 +434,7 @@ module fc128_bridge_top #(
                                cmis_de_rb[port_idx], cmis_dpchg[port_idx],
                                cmis_txst[port_idx], cmis_rxst[port_idx],
                                cmis_dp[port_idx]};
+            3'd6: rdata_mux = {30'h0, port_rate[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

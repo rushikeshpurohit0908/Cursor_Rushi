@@ -34,7 +34,7 @@ module tb_fc_rs544_port;
     .clk_system(clk_system), .rst_system_n(rst_system_n),
     .port_en(1'b1), .fec_en(1'b0),
     .scrambler_en(1'b0), .scrambler_en_s(1'b1),
-    .xcode_en(1'b1), .rs544_en(1'b1),
+    .xcode_en(1'b1), .rs544_en(1'b1), .rate(FC_RATE_128),
     .credit_load(1'b0), .credit_cli_i(8'd8), .credit_sys_i(8'd8),
     .client_rx_valid(client_rx_valid), .client_rx_ready(client_rx_ready),
     .client_rx_sync(client_rx_sync), .client_rx_data(client_rx_data),

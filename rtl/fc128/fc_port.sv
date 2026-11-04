@@ -8,6 +8,11 @@
 // The system machine watches the merged system ingress and chooses the
 // primitive the client-to-system pipe sends. Frames stay off a link until
 // that machine reaches Active.
+//
+// rate is the per-port line rate (fc128_defs.vh). 128GFC stripes both system
+// lanes. 64GFC and 32GFC use lane 0, and block lock follows that lane.
+// 32GFC inserts one IDLE per block in front of the transcode and deletes it
+// on the merged stream, before this port's link machine and frame pipe.
 module fc_port #(
   parameter int MAX_PAY        = 128,
   parameter int FIFO_DEPTH     = 32,
@@ -24,6 +29,7 @@ module fc_port #(
   input  logic        scrambler_en_s,
   input  logic        xcode_en,
   input  logic        rs544_en,
+  input  logic [1:0]  rate,
   input  logic        credit_load,
   input  logic [7:0]  credit_cli_i,
   input  logic [7:0]  credit_sys_i,
@@ -71,6 +77,15 @@ module fc_port #(
   logic [1:0]  s_pipe_tx_sync;
   logic [63:0] c_tx_to_split_data;
   logic [63:0] s_pipe_tx_data;
+  logic        rate_tx_valid;
+  logic        rate_tx_ready;
+  logic [1:0]  rate_tx_sync;
+  logic [63:0] rate_tx_data;
+  logic        rate_rx_valid;
+  logic        rate_rx_in_ready;
+  logic        rate_pipe_ready;
+  logic [1:0]  rate_rx_sync;
+  logic [63:0] rate_rx_data;
   logic        c2s_take, s2c_take, c2s_rrdy, s2c_rrdy;
   logic        c2s_acc, s2c_acc;
   logic [31:0] c2s_rx, c2s_tx, c2s_crc, c2s_corr, c2s_fail;
@@ -104,6 +119,7 @@ module fc_port #(
   logic [1:0]  split_valid;
   logic [1:0][1:0] split_sync;
   logic [1:0][63:0] split_data;
+  logic [1:0][63:0] sys_tx_scr;
   logic        merge_valid, merge_ready;
   logic [1:0]  merge_sync;
   logic [63:0] merge_data;
@@ -126,7 +142,12 @@ module fc_port #(
       sys_lock_sync <= sys_lock_meta;
     end
   end
-  assign sys_locked = sys_lock_sync[0] & sys_lock_sync[1];
+  // 2'b01 is 64GFC and 2'b10 is 32GFC. Anything else, including the reserved
+  // encoding, keeps the 128GFC stripe. half is the 32GFC IDLE insert.
+  wire stripe = (rate != 2'b01) && (rate != 2'b10);
+  wire half   = (rate == 2'b10);
+  assign sys_locked = stripe ? (sys_lock_sync[0] & sys_lock_sync[1])
+                             : sys_lock_sync[0];
 
   // xcode_en is a client-clock CSR bit. System block lock sees the packed
   // sync marker only after it has crossed into clk_system.
@@ -179,7 +200,7 @@ module fc_port #(
     .rx_sync         (c_rx_sync),
     .rx_data         (c_rx_data),
     .tx_valid        (c_tx_to_split_valid),
-    .tx_ready        (x_in_ready),
+    .tx_ready        (rate_tx_ready),
     .tx_sync         (c_tx_to_split_sync),
     .tx_data         (c_tx_to_split_data),
     .credit_ok       (sys_cr != 8'h00),
@@ -194,14 +215,28 @@ module fc_port #(
     .stat_fec_fail   (c2s_fail)
   );
 
+  fc_rate_tx u_rate_tx (
+    .clk       (clk_client),
+    .rst_n     (rst_client_n),
+    .half      (half),
+    .in_valid  (c_tx_to_split_valid),
+    .in_ready  (rate_tx_ready),
+    .in_sync   (c_tx_to_split_sync),
+    .in_data   (c_tx_to_split_data),
+    .out_valid (rate_tx_valid),
+    .out_ready (x_in_ready),
+    .out_sync  (rate_tx_sync),
+    .out_data  (rate_tx_data)
+  );
+
   fc_xcode_tx u_xcode_tx (
     .clk       (clk_client),
     .rst_n     (rst_client_n),
     .en        (xcode_en),
-    .in_valid  (c_tx_to_split_valid),
+    .in_valid  (rate_tx_valid),
     .in_ready  (x_in_ready),
-    .in_sync   (c_tx_to_split_sync),
-    .in_data   (c_tx_to_split_data),
+    .in_sync   (rate_tx_sync),
+    .in_data   (rate_tx_data),
     .out_valid (x_to_split_valid),
     .out_ready (rs_tx_ready),
     .out_sync  (x_to_split_sync),
@@ -229,6 +264,7 @@ module fc_port #(
     .rst_wr_n (rst_client_n),
     .clk_rd   (clk_system),
     .rst_rd_n (rst_system_n),
+    .stripe   (stripe),
     .wr_valid (rs_to_split_valid),
     .wr_ready (split_ready),
     .wr_sync  (rs_to_split_sync),
@@ -249,10 +285,11 @@ module fc_port #(
         .descramble (1'b0),
         .step       (split_valid[si] && sys_tx_ready[si]),
         .din        (split_data[si]),
-        .dout       (sys_tx_data[si])
+        .dout       (sys_tx_scr[si])
       );
       assign sys_tx_valid[si] = split_valid[si];
-      assign sys_tx_sync[si]  = split_sync[si];
+      assign sys_tx_sync[si]  = split_valid[si] ? split_sync[si] : 2'b00;
+      assign sys_tx_data[si]  = split_valid[si] ? sys_tx_scr[si] : 64'h0;
     end
   endgenerate
 
@@ -279,6 +316,7 @@ module fc_port #(
     .rst_wr_n (rst_system_n),
     .clk_rd   (clk_client),
     .rst_rd_n (rst_client_n),
+    .stripe   (stripe),
     .wr_valid (sys_rx_valid),
     .wr_ready (sys_rx_ready),
     .wr_sync  (sys_front_sync),
@@ -315,9 +353,23 @@ module fc_port #(
     .in_sync   (rs_rx_sync),
     .in_data   (rs_rx_data),
     .out_valid (dec_valid),
-    .out_ready (dec_ready),
+    .out_ready (rate_rx_in_ready),
     .out_sync  (dec_sync),
     .out_data  (dec_data)
+  );
+
+  fc_rate_rx u_rate_rx (
+    .clk       (clk_client),
+    .rst_n     (rst_client_n),
+    .half      (half),
+    .in_valid  (dec_valid),
+    .in_ready  (rate_rx_in_ready),
+    .in_sync   (dec_sync),
+    .in_data   (dec_data),
+    .out_valid (rate_rx_valid),
+    .out_ready (rate_pipe_ready),
+    .out_sync  (rate_rx_sync),
+    .out_data  (rate_rx_data)
   );
 
   fc_pipe #(.MAX_PAY(MAX_PAY)) u_s2c (
@@ -329,10 +381,10 @@ module fc_port #(
     .rx_link_up      (system_link_up),
     .tx_link_up      (client_link_up),
     .tx_os           (client_tx_os),
-    .rx_valid        (dec_valid),
-    .rx_ready        (dec_ready),
-    .rx_sync         (dec_sync),
-    .rx_data         (dec_data),
+    .rx_valid        (rate_rx_valid),
+    .rx_ready        (rate_pipe_ready),
+    .rx_sync         (rate_rx_sync),
+    .rx_data         (rate_rx_data),
     .tx_valid        (s_pipe_tx_valid),
     .tx_ready        (c_tx_ready),
     .tx_sync         (s_pipe_tx_sync),
@@ -370,9 +422,9 @@ module fc_port #(
     .rst_n      (rst_client_n),
     .port_en    (port_en),
     .locked     (sys_locked),
-    .rx_fire    (dec_valid && dec_ready),
-    .rx_sync    (dec_sync),
-    .rx_data    (dec_data),
+    .rx_fire    (rate_rx_valid && rate_pipe_ready),
+    .rx_sync    (rate_rx_sync),
+    .rx_data    (rate_rx_data),
     .link_up    (system_link_up),
     .tx_os      (system_tx_os),
     .state_code (system_ls)
