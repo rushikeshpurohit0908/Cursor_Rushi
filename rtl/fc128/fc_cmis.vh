@@ -34,7 +34,14 @@
 // to the threshold is not a flag. The flag stays set while the
 // comparison is true and holds a pulse until byte 9 is read. Lower
 // byte 32 is the matching mask and powers up at FFh. An unmasked flag
-// is part of IntL. Byte 2 bit 6, SteppedConfigOnly, stays clear.
+// is part of IntL. Lower byte 10 is the Aux1/Aux2 monitor flags, same
+// high-alarm, low-alarm, high-warning, low-warning order. Aux1 is laser
+// temperature (signed 1/256 C) and Aux2 is TEC current (signed
+// 100/32767 %). Equal to the threshold is not a flag. Bytes 18-21 are
+// those monitors. Lower byte 33 is the mask and powers up at FFh. An
+// unmasked flag is part of IntL. The bytes 0-17 poll is left as it is;
+// bytes 18-21 are a separate read. Byte 2 bit 6, SteppedConfigOnly,
+// stays clear.
 // Lower bytes 86-97 advertise three one-lane applications. Lanes in
 // the map are numbered from 1.
 
@@ -123,6 +130,23 @@ localparam [15:0] CMIS_VCC_HA   = 16'd36000;
 localparam [15:0] CMIS_VCC_LA   = 16'd30000;
 localparam [15:0] CMIS_VCC_HW   = 16'd34650;
 localparam [15:0] CMIS_VCC_LW   = 16'd31350;
+// Aux1 laser temperature and Aux2 TEC current. Page 02h would hold
+// these at bytes 144-159; this host keeps them fixed. Temperature is
+// signed 1/256 C: 70 C, 20 C, 65 C, 25 C. TEC current is signed
+// 100/32767 %: +80%, -80%, +60%, -60%. Order is high alarm, low alarm,
+// high warning, low warning. 50 C and about +10% sit inside both windows.
+localparam [7:0]  CMIS_AUXFLG   = 8'd10;
+localparam [7:0]  CMIS_AUX1     = 8'd18;
+localparam [7:0]  CMIS_AUX2     = 8'd20;
+localparam [7:0]  CMIS_AUXMSK   = 8'd33;
+localparam [15:0] CMIS_AUX1_HA  = 16'd17920;
+localparam [15:0] CMIS_AUX1_LA  = 16'd5120;
+localparam [15:0] CMIS_AUX1_HW  = 16'd16640;
+localparam [15:0] CMIS_AUX1_LW  = 16'd6400;
+localparam [15:0] CMIS_AUX2_HA  = 16'd26214;
+localparam [15:0] CMIS_AUX2_LA  = 16'h999A;
+localparam [15:0] CMIS_AUX2_HW  = 16'd19660;
+localparam [15:0] CMIS_AUX2_LW  = 16'hB334;
 localparam [7:0] CMIS_CFGSTAT   = 8'd202;
 localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;
