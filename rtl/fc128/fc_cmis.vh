@@ -6,10 +6,15 @@
 // in units of 1/256 C, and byte 16 is the supply MSB, in units of 100 uV.
 // ModuleState occupies byte 3 bits [3:1]. An SFP112 data path is lane 1.
 // Page 10h byte 128 bit 0 is DPDeinit, byte 130 bit 0 is OutputDisableTx,
-// and byte 143 bit 0 is the write-only ApplyDPInit trigger. Page 11h reports
-// DPState (byte 128, lane 1 in [3:0]), OutputStatusRx (byte 132),
-// OutputStatusTx (byte 133), DPStateChangedFlag (byte 134, clear on read),
-// and DPInitPending (byte 235). Lanes in the map are numbered from 1.
+// byte 132 bit 0 is OutputSquelchForceTx, and byte 143 bit 0 is the
+// write-only ApplyDPInit trigger. Page 10h byte 145 is the staged AppSel
+// for lane 1: AppSelCode [7:4], DataPathID [3:1], ExplicitControl [0].
+// Page 11h reports DPState (byte 128, lane 1 in [3:0]), OutputStatusRx
+// (byte 132), OutputStatusTx (byte 133), DPStateChangedFlag (byte 134,
+// clear on read), ConfigStatus (byte 202 [3:0]), the active AppSel
+// (byte 206), and DPInitPending (byte 235). Byte 2 bit 6, SteppedConfigOnly,
+// stays clear. Lower bytes 86-97 advertise three one-lane applications.
+// Lanes in the map are numbered from 1.
 
 localparam [6:0] CMIS_DEV       = 7'h50;
 localparam [7:0] CMIS_ID_SFP    = 8'h20;
@@ -25,13 +30,29 @@ localparam [7:0] CMIS_LANE_PAGE = 8'h10;
 localparam [7:0] CMIS_STAT_PAGE = 8'h11;
 localparam [7:0] CMIS_DPDEINIT  = 8'd128;
 localparam [7:0] CMIS_TXDIS     = 8'd130;
+localparam [7:0] CMIS_SQFORCE   = 8'd132;
 localparam [7:0] CMIS_APPLY     = 8'd143;
+localparam [7:0] CMIS_SCS0      = 8'd145;
 localparam [7:0] CMIS_OUTRX     = 8'd132;
 localparam [7:0] CMIS_OUTTX     = 8'd133;
 localparam [7:0] CMIS_DPFLAG    = 8'd134;
+localparam [7:0] CMIS_CFGSTAT   = 8'd202;
+localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;
+localparam [7:0] CMIS_APP_BASE  = 8'd86;
 localparam [5:0] CMIS_DP_N      = 6'd7;
 localparam [5:0] CMIS_POLL_N    = 6'd18;
+// SFF-8024 host electrical IDs and single-mode Fibre Channel media IDs.
+localparam [7:0] CMIS_H_128     = 8'h4A;
+localparam [7:0] CMIS_H_64      = 8'h29;
+localparam [7:0] CMIS_H_32      = 8'h28;
+localparam [7:0] CMIS_M_128     = 8'h45;
+localparam [7:0] CMIS_M_64      = 8'h23;
+localparam [7:0] CMIS_M_32      = 8'h22;
+localparam [7:0] CMIS_LANES11   = 8'h11;
+localparam [7:0] CMIS_LANE1     = 8'h01;
+// AppSel 1, DataPathID 0 (lane 1), explicit control clear.
+localparam [7:0] CMIS_APP_128   = 8'h10;
 
 // Table 8-74. 0h and 8h-Fh are reserved and not used by this path.
 localparam [3:0] CMIS_DP_DEACT  = 4'h1;
@@ -41,3 +62,10 @@ localparam [3:0] CMIS_DP_ACT    = 4'h4;
 localparam [3:0] CMIS_DP_TXON   = 4'h5;
 localparam [3:0] CMIS_DP_TXOFF  = 4'h6;
 localparam [3:0] CMIS_DP_INITED = 4'h7;
+// ConfigStatus, page 11h byte 202 bits [3:0].
+localparam [3:0] CMIS_CFG_NONE  = 4'h0;
+localparam [3:0] CMIS_CFG_OK    = 4'h1;
+localparam [3:0] CMIS_CFG_REJ   = 4'h2;
+localparam [3:0] CMIS_CFG_APP   = 4'h3;
+localparam [3:0] CMIS_CFG_DP    = 4'h4;
+localparam [3:0] CMIS_CFG_BUSY  = 4'hC;

@@ -733,6 +733,51 @@ module tb_fc128_bridge;
       $display("FAIL cmis dp after apply %h", rdw);
       errors = errors + 1;
     end
+    begin : cmis_app
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h21C, rdw);
+        if (rdw[19:16] == 4'h1 && rdw[15:8] == 8'h10 && rdw[7:0] == 8'h10)
+          disable cmis_app;
+      end
+      $display("FAIL cmis appsel %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0121);
+    csr_read_t(12'h200, rdw);
+    if (rdw !== 32'h0000_0121) begin
+      $display("FAIL cmis squelch req %h", rdw);
+      errors = errors + 1;
+    end
+    begin : cmis_sq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && rdw[3:0] == 4'h7 && rdw[4] && !rdw[5])
+          disable cmis_sq;
+      end
+      $display("FAIL cmis squelch %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h210, rdw);
+    if (rdw[3] !== 1'b1) begin
+      $display("FAIL cmis squelch rb %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0021);
+    begin : cmis_sqoff
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && rdw[3:0] == 4'h4 && rdw[5] && rdw[4])
+          disable cmis_sqoff;
+      end
+      $display("FAIL cmis squelch clear %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h200, 32'h0000_0023);
     begin : cmis_lp
       integer k;
