@@ -56,7 +56,7 @@ module tb_fc_rate;
   logic [1:0]  sys_tx_valid, sys_tx_ready, sys_rx_valid, sys_rx_ready;
   logic [1:0][1:0]  sys_tx_sync, sys_rx_sync;
   logic [1:0][63:0] sys_tx_data, sys_rx_data;
-  logic        client_lock, client_link_up, system_link_up, sys_locked;
+  logic        client_lock, client_link_up, system_link_up, sys_locked, rate_busy;
   logic [2:0]  client_ls, system_ls;
   logic [15:0] stat_rs544_corr, stat_rs544_fail;
   logic [7:0]  credit_cli, credit_sys;
@@ -84,7 +84,8 @@ module tb_fc_rate;
     .stat_fec_fail(stat_fec_fail),
     .stat_rs544_corr(stat_rs544_corr), .stat_rs544_fail(stat_rs544_fail),
     .client_link_up(client_link_up), .system_link_up(system_link_up),
-    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked)
+    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked),
+    .rate_busy(rate_busy)
   );
 
   assign client_tx_ready = 1'b1;
@@ -130,6 +131,7 @@ module tb_fc_rate;
   end
 
   integer cap_count = 0;
+  logic cap_clr = 0;
   integer pst = 0;
   integer pidx = 0;
   integer pneed = 0;
@@ -137,7 +139,7 @@ module tb_fc_rate;
 
   always @(posedge clk_client or negedge rst_client_n) begin
     integer b, n;
-    if (!rst_client_n) begin
+    if (!rst_client_n || cap_clr) begin
       cap_count <= 0;
       pst <= 0;
     end else if (client_tx_valid && client_tx_ready) begin
@@ -280,6 +282,68 @@ module tb_fc_rate;
     end
   endtask
 
+  task automatic clear_caps;
+    begin
+      cap_clr = 1;
+      repeat (2) @(posedge clk_client);
+      #1;
+      cap_clr = 0;
+    end
+  endtask
+
+  // Change rate without resetting the port. The link must fall, then return,
+  // and a frame sent after that must come back intact.
+  task automatic live_rate(input [1:0] next_rate);
+    integer n0, n1;
+    begin
+      if (!client_link_up || !system_link_up) begin
+        $display("FAIL live rate %0d started down", next_rate);
+        errors = errors + 1;
+      end
+      rate = next_rate;
+      t = 0;
+      while (system_link_up && t < 20000) begin
+        @(posedge clk_client);
+        t = t + 1;
+      end
+      if (system_link_up || !rate_busy) begin
+        $display("FAIL live rate %0d drop up %0d busy %0d",
+                 next_rate, system_link_up, rate_busy);
+        errors = errors + 1;
+      end
+      t = 0;
+      while ((rate_busy || !client_link_up || !system_link_up || !sys_locked) &&
+             t < 200000) begin
+        @(posedge clk_client);
+        t = t + 1;
+      end
+      if (rate_busy || !client_link_up || !system_link_up || !sys_locked) begin
+        $display("FAIL live rate %0d relink busy %0d cli %0d sys %0d lock %0b",
+                 next_rate, rate_busy, client_link_up, system_link_up, sys_locked);
+        errors = errors + 1;
+      end else begin
+        n0 = lane0_n;
+        n1 = lane1_n;
+        clear_caps;
+        send_frame;
+        wait_frame;
+        repeat (40) @(posedge clk_system);
+        if (next_rate == FC_RATE_128) begin
+          if (lane0_n <= n0 || lane1_n <= n1) begin
+            $display("FAIL live 128 lanes %0d %0d -> %0d %0d", n0, n1, lane0_n, lane1_n);
+            errors = errors + 1;
+          end
+        end else if (lane1_n != n1) begin
+          $display("FAIL live rate %0d lane1 %0d -> %0d", next_rate, n1, lane1_n);
+          errors = errors + 1;
+        end else if (lane0_n <= n0) begin
+          $display("FAIL live rate %0d lane0 stuck %0d", next_rate, lane0_n);
+          errors = errors + 1;
+        end
+      end
+    end
+  endtask
+
   task automatic boot(input [1:0] next_rate, input x_on);
     begin
       drive_en = 0;
@@ -411,6 +475,12 @@ module tb_fc_rate;
         errors = errors + 1;
       end
     end
+
+    // The link is Active at 32GFC with the transcode on. Move the rate
+    // without a port reset: 64, then 128, then 32 again.
+    live_rate(FC_RATE_64);
+    live_rate(FC_RATE_128);
+    live_rate(FC_RATE_32);
 
     if (errors == 0)
       $display("PASS tb_fc_rate");

@@ -6,6 +6,8 @@
 // link machine and the frame pipe. 64GFC and 128GFC leave both sides as wires.
 // The insert sits in front of the 256b/257b transcode, so a packed group is
 // still four beats and the RS(544,514) codeword stays contiguous.
+// fc_port resets both sides before it changes half, so the phase restarts
+// on a block boundary with the lane FIFOs empty.
 
 module fc_rate_tx (
   input  logic        clk,
