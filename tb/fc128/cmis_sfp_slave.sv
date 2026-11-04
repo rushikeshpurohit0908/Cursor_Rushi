@@ -3,12 +3,18 @@
 // Lower memory follows CMIS 5.0. Byte 0 is SFF-8024 identifier 20h
 // (SFP/SFP+ with CMIS). Byte 26 bit 4 is LowPwrRequestSW, bit 6 is
 // LowPwrAllowRequestHW, and bit 3 is the self-clearing SoftwareReset.
-// Page 10h byte 130 bit 0 is OutputDisableTx for lane 1. Temperature is
-// signed 1/256 C at bytes 14-15. Supply is unsigned 100 uV at bytes 16-17.
-// The slave does not stretch SCL. sda_oe drives a zero on the open-drain pad.
+// Page 10h byte 130 bit 0 is OutputDisableTx for lane 1, byte 128 bit 0 is
+// DPDeinit, and byte 143 bit 0 is the write-only ApplyDPInit trigger.
+// Page 11h is lane status. One data path, lane 1, follows Figure 6-5 with
+// SteppedConfigOnly = 0: ModuleReady and DPDeinit clear run the path up,
+// and ApplyDPInit sets DPInitPending so the path cycles through DPDeinit.
+// Temperature is signed 1/256 C at bytes 14-15. Supply is unsigned 100 uV
+// at bytes 16-17. The slave does not stretch SCL. sda_oe drives a zero.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
-  parameter [7:0] TXDIS_INIT = 8'hA0
+  parameter int DP_DLY = 16,
+  parameter [7:0] TXDIS_INIT = 8'hA0,
+  parameter [7:0] DPDE_INIT = 8'h00
 ) (
   input  logic        clk,
   input  logic        rst_n,
@@ -22,6 +28,10 @@ module cmis_sfp_slave #(
   input  logic [15:0] vcc_u16,
   output logic [2:0]  mod_state,
   output logic [7:0]  txdis_byte,
+  output logic [7:0]  dpde_byte,
+  output logic [3:0]  dp_state,
+  output logic        rx_status,
+  output logic        tx_status,
   output logic        flag_state
 );
   `include "fc_cmis.vh"
@@ -46,12 +56,24 @@ module cmis_sfp_slave #(
   logic       flag_sc;
   logic       flag_clr;
   logic       sw_hit;
+  logic       apply_hit;
+  logic       dp_flag_clr;
   logic       sw_resetting;
   logic       held;
   logic       raise_flag;
   logic [2:0] mod_state_q;
   logic [15:0] pwr_cnt;
+  logic [3:0] dp_q;
+  logic [15:0] dp_cnt;
+  logic       dp_flag;
+  logic       dp_pending;
+  logic [3:0] dp_nxt;
+  logic [15:0] cnt_nxt;
+  logic       pend_nxt;
+  logic       flag_set;
   integer ii;
+
+  localparam int DLY = (DP_DLY < 1) ? 1 : DP_DLY;
 
   wire start = scl_q && scl_i && sda_q && !sda_i;
   wire stop  = scl_q && scl_i && !sda_q && sda_i;
@@ -59,8 +81,19 @@ module cmis_sfp_slave #(
   wire fall  = scl_q && !scl_i;
   wire lowpwr_s = mem[CMIS_CTL][4] | (mem[CMIS_CTL][6] & lpmode);
   wire int_deassert = !(flag_sc && !mem[31][0]);
+  wire module_ready = reset_n && !sw_resetting && !force_fault &&
+                      (mod_state_q == CMIS_ST_RDY);
+  // Eq. 6-6 and 6-12. OutputSquelchForceTx is not modeled.
+  wire dp_deinit_s = !module_ready || lowpwr_s || p10[CMIS_DPDEINIT][0];
+  wire dp_redeinit_s = dp_deinit_s || dp_pending;
+  wire dp_deactivate_s = dp_redeinit_s || p10[CMIS_TXDIS][0];
 
   assign txdis_byte = p10[CMIS_TXDIS];
+  assign dpde_byte = p10[CMIS_DPDEINIT];
+  assign dp_state = dp_q;
+  assign rx_status = (dp_q == CMIS_DP_INITED) || (dp_q == CMIS_DP_TXON) ||
+                     (dp_q == CMIS_DP_TXOFF) || (dp_q == CMIS_DP_ACT);
+  assign tx_status = (dp_q == CMIS_DP_ACT);
   assign flag_state = flag_sc;
   assign mod_state = force_fault ? CMIS_ST_FLT :
                      sw_resetting ? CMIS_ST_LOW : mod_state_q;
@@ -93,7 +126,20 @@ module cmis_sfp_slave #(
         peek = mem[a];
       else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE)
         peek = p10[a];
-      else
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE) begin
+        if (a == CMIS_DPDEINIT)
+          peek = {4'h0, dp_q};
+        else if (a == CMIS_OUTRX)
+          peek = {7'h0, rx_status};
+        else if (a == CMIS_OUTTX)
+          peek = {7'h0, tx_status};
+        else if (a == CMIS_DPFLAG)
+          peek = {7'h0, dp_flag};
+        else if (a == CMIS_DPPEND)
+          peek = {7'h0, dp_pending};
+        else
+          peek = 8'h00;
+      end else
         peek = 8'h00;
     end
   endfunction
@@ -111,6 +157,7 @@ module cmis_sfp_slave #(
       mem[31] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       p10[CMIS_TXDIS] <= TXDIS_INIT;
+      p10[CMIS_DPDEINIT] <= DPDE_INIT;
       st <= S_IDLE;
       sh <= 8'h00;
       bits <= 4'd0;
@@ -123,11 +170,15 @@ module cmis_sfp_slave #(
       sda_oe <= 1'b0;
       flag_clr <= 1'b0;
       sw_hit <= 1'b0;
+      apply_hit <= 1'b0;
+      dp_flag_clr <= 1'b0;
     end else begin
       scl_q <= scl_i;
       sda_q <= sda_i;
       flag_clr <= 1'b0;
       sw_hit <= 1'b0;
+      apply_hit <= 1'b0;
+      dp_flag_clr <= 1'b0;
       if (!reset_n) begin
         st <= S_IDLE;
         sda_oe <= 1'b0;
@@ -173,6 +224,11 @@ module cmis_sfp_slave #(
                 end else if (ptr < 8'd128) begin
                   mem[ptr] <= sh;
                   ptr <= ptr + 8'd1;
+                end else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE && ptr == CMIS_APPLY) begin
+                  // Write-only trigger. A 1 in bit 0 requests provision.
+                  if (sh[0])
+                    apply_hit <= 1'b1;
+                  ptr <= ptr + 8'd1;
                 end else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE) begin
                   p10[ptr] <= sh;
                   ptr <= ptr + 8'd1;
@@ -189,6 +245,8 @@ module cmis_sfp_slave #(
                 load_tx(ptr);
                 if (ptr == 8'd8)
                   flag_clr <= 1'b1;
+                if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
+                  dp_flag_clr <= 1'b1;
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -222,6 +280,8 @@ module cmis_sfp_slave #(
                 load_tx(ptr);
                 if (ptr == 8'd8)
                   flag_clr <= 1'b1;
+                if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
+                  dp_flag_clr <= 1'b1;
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -309,6 +369,109 @@ module cmis_sfp_slave #(
         flag_sc <= 1'b1;
       else if (flag_clr)
         flag_sc <= 1'b0;
+    end
+  end
+
+  // Figure 6-5. Steady states are DPDeactivated, DPInitialized, and
+  // DPActivated. The other four are timed transients. DPStateChangedFlag is
+  // set only on entry to a steady state that is not already exiting.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      dp_q <= CMIS_DP_DEACT;
+      dp_cnt <= 16'd0;
+      dp_flag <= 1'b1;
+      dp_pending <= 1'b0;
+    end else begin
+      dp_nxt = dp_q;
+      cnt_nxt = dp_cnt;
+      pend_nxt = dp_pending;
+      flag_set = 1'b0;
+      if (apply_hit)
+        pend_nxt = 1'b1;
+      if (!reset_n || sw_resetting || force_fault) begin
+        dp_nxt = CMIS_DP_DEACT;
+        cnt_nxt = 16'd0;
+        pend_nxt = 1'b0;
+        if (dp_q != CMIS_DP_DEACT)
+          flag_set = 1'b1;
+      end else begin
+        case (dp_q)
+          CMIS_DP_DEACT: begin
+            if (!dp_deinit_s) begin
+              dp_nxt = CMIS_DP_INIT;
+              cnt_nxt = DLY[15:0];
+            end
+          end
+          CMIS_DP_INIT: begin
+            if (dp_deinit_s) begin
+              dp_nxt = CMIS_DP_DEINIT;
+              cnt_nxt = DLY[15:0];
+            end else if (dp_cnt == 16'd0) begin
+              dp_nxt = CMIS_DP_INITED;
+            end else begin
+              cnt_nxt = dp_cnt - 16'd1;
+            end
+          end
+          CMIS_DP_INITED: begin
+            if (dp_redeinit_s) begin
+              dp_nxt = CMIS_DP_DEINIT;
+              cnt_nxt = DLY[15:0];
+            end else if (!dp_deactivate_s) begin
+              dp_nxt = CMIS_DP_TXON;
+              cnt_nxt = DLY[15:0];
+            end
+          end
+          CMIS_DP_DEINIT: begin
+            if (dp_cnt == 16'd0)
+              dp_nxt = CMIS_DP_DEACT;
+            else
+              cnt_nxt = dp_cnt - 16'd1;
+          end
+          CMIS_DP_TXON: begin
+            if (dp_deactivate_s) begin
+              dp_nxt = CMIS_DP_TXOFF;
+              cnt_nxt = DLY[15:0];
+            end else if (dp_cnt == 16'd0) begin
+              dp_nxt = CMIS_DP_ACT;
+            end else begin
+              cnt_nxt = dp_cnt - 16'd1;
+            end
+          end
+          CMIS_DP_ACT: begin
+            if (dp_deactivate_s) begin
+              dp_nxt = CMIS_DP_TXOFF;
+              cnt_nxt = DLY[15:0];
+            end
+          end
+          CMIS_DP_TXOFF: begin
+            if (dp_cnt == 16'd0)
+              dp_nxt = CMIS_DP_INITED;
+            else
+              cnt_nxt = dp_cnt - 16'd1;
+          end
+          default: begin
+            dp_nxt = CMIS_DP_DEACT;
+            cnt_nxt = 16'd0;
+          end
+        endcase
+        if (dp_nxt == CMIS_DP_INIT && dp_q != CMIS_DP_INIT)
+          pend_nxt = 1'b0;
+        if (dp_nxt != dp_q) begin
+          if (dp_nxt == CMIS_DP_DEACT && dp_deinit_s)
+            flag_set = 1'b1;
+          if (dp_nxt == CMIS_DP_INITED && !dp_redeinit_s && dp_deactivate_s)
+            flag_set = 1'b1;
+          if (dp_nxt == CMIS_DP_ACT && !dp_deactivate_s)
+            flag_set = 1'b1;
+        end
+      end
+      dp_q <= dp_nxt;
+      dp_cnt <= cnt_nxt;
+      dp_pending <= pend_nxt;
+      if (flag_set)
+        dp_flag <= 1'b1;
+      else if (dp_flag_clr)
+        dp_flag <= 1'b0;
     end
   end
 endmodule
