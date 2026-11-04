@@ -5,12 +5,13 @@
 //   * sys_*     is the FGT pair (2 x 58G) bonded to that port
 //   * sec_*     is the extra 8 x 58G bank (protect copy or squelch)
 //
-// The block coding, ordered sets, and RS(255,239) FEC are the PoC mapping of
-// the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox, link
-// init). Control blocks carry the FC-FS ordered set in [31:0]. CSR bit 5
+// The block coding, ordered sets, and frame-pipe RS(255,239) FEC are the PoC
+// mapping of the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox,
+// link init). Control blocks carry the FC-FS ordered set in [31:0]. CSR bit 5
 // packs each system direction into Clause 119 256b/257b words. FC-PI-8
-// production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec is the
-// replacement point. Ordered sets are documented in fc128_defs.vh.
+// RS(544,514) over GF(2^10) is fc_rs544. A codeword is 544 ten-bit symbols,
+// so that engine stays off the 256-byte frame RAM. Ordered sets are in
+// fc128_defs.vh.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,

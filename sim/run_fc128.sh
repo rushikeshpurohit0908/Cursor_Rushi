@@ -25,6 +25,10 @@ compile_run tb_fc_rs_fec \
   rtl/fc128/fc_rs_fec.sv \
   tb/fc128/tb_fc_rs_fec.sv
 
+compile_run tb_fc_rs544 \
+  rtl/fc128/fc_rs544.sv \
+  tb/fc128/tb_fc_rs544.sv
+
 compile_run tb_fc_link \
   rtl/fc128/fc_link_sm.sv \
   tb/fc128/tb_fc_link.sv
