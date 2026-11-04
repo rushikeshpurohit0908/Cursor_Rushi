@@ -52,6 +52,16 @@
 // flag. A negative TEC current must not set a high alarm. Byte 33 is the
 // matching mask, the whole byte. A read of byte 10 clears a latch whose
 // comparison is no longer true. Bytes 18-21 are not clear-on-read.
+// Lower bytes 22-23 and 24-25 are Aux3Mon and CustomMon. Aux3 is the
+// additional supply Vcc2, signed, in units of 100 uV. Custom is laser
+// frequency error, signed, in units of 1 MHz. Byte 11 is the eight
+// clear-on-read flags: Aux3 high alarm, low alarm, high warning, low
+// warning, then the same four for Custom. A high flag is the monitor
+// greater than the page 02h threshold (bytes 160-175) and a low flag is
+// the monitor less than it. Equality is not a flag. A negative Vcc2 or
+// frequency error must not set a high alarm. Byte 34 is the matching
+// mask, the whole byte. A read of byte 11 clears a latch whose comparison
+// is no longer true. Bytes 22-25 are not clear-on-read.
 // Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
@@ -85,11 +95,15 @@ localparam [7:0] CMIS_ALM_RX   = 8'd149;
 localparam [7:0] CMIS_MOD_FLG  = 8'd8;
 localparam [7:0] CMIS_MON_FLG  = 8'd9;
 localparam [7:0] CMIS_AUX_FLG  = 8'd10;
+localparam [7:0] CMIS_A3_FLG   = 8'd11;
 localparam [7:0] CMIS_AUX1_MON = 8'd18;
 localparam [7:0] CMIS_AUX2_MON = 8'd20;
+localparam [7:0] CMIS_AUX3_MON = 8'd22;
+localparam [7:0] CMIS_CUST_MON = 8'd24;
 localparam [7:0] CMIS_MSK_SC   = 8'd31;
 localparam [7:0] CMIS_MSK_MON  = 8'd32;
 localparam [7:0] CMIS_MSK_AUX  = 8'd33;
+localparam [7:0] CMIS_MSK_A3   = 8'd34;
 localparam [7:0] CMIS_LOSRX    = 8'd147;
 localparam [7:0] CMIS_LOLRX    = 8'd148;
 localparam [7:0] CMIS_OPT_TX   = 8'd154;
@@ -128,6 +142,14 @@ localparam [7:0] CMIS_TH_A2_HA = 8'd152;
 localparam [7:0] CMIS_TH_A2_LA = 8'd154;
 localparam [7:0] CMIS_TH_A2_HW = 8'd156;
 localparam [7:0] CMIS_TH_A2_LW = 8'd158;
+localparam [7:0] CMIS_TH_A3_HA = 8'd160;
+localparam [7:0] CMIS_TH_A3_LA = 8'd162;
+localparam [7:0] CMIS_TH_A3_HW = 8'd164;
+localparam [7:0] CMIS_TH_A3_LW = 8'd166;
+localparam [7:0] CMIS_TH_CU_HA = 8'd168;
+localparam [7:0] CMIS_TH_CU_LA = 8'd170;
+localparam [7:0] CMIS_TH_CU_HW = 8'd172;
+localparam [7:0] CMIS_TH_CU_LW = 8'd174;
 localparam signed [15:0] CMIS_TEMP_HA = 16'sh4B00;
 localparam signed [15:0] CMIS_TEMP_LA = -16'sd1280;
 localparam signed [15:0] CMIS_TEMP_HW = 16'sh4600;
@@ -147,6 +169,17 @@ localparam signed [15:0] CMIS_AUX2_HA = 16'sd26214;
 localparam signed [15:0] CMIS_AUX2_LA = -16'sd26214;
 localparam signed [15:0] CMIS_AUX2_HW = 16'sd19660;
 localparam signed [15:0] CMIS_AUX2_LW = -16'sd19660;
+// Aux3 additional supply, signed 100 uV: 1.980 V / 1.620 V / 1.890 V / 1.710 V.
+// Custom laser frequency error, signed 1 MHz: +2000 / -2000 / +1000 / -1000.
+// Nominal samples 1.800 V (18000) and +250 MHz sit inside both windows.
+localparam signed [15:0] CMIS_AUX3_HA = 16'sd19800;
+localparam signed [15:0] CMIS_AUX3_LA = 16'sd16200;
+localparam signed [15:0] CMIS_AUX3_HW = 16'sd18900;
+localparam signed [15:0] CMIS_AUX3_LW = 16'sd17100;
+localparam signed [15:0] CMIS_CUST_HA = 16'sd2000;
+localparam signed [15:0] CMIS_CUST_LA = -16'sd2000;
+localparam signed [15:0] CMIS_CUST_HW = 16'sd1000;
+localparam signed [15:0] CMIS_CUST_LW = -16'sd1000;
 localparam [15:0] CMIS_TX_HA   = 16'h4000;
 localparam [15:0] CMIS_TX_LA   = 16'h0008;
 localparam [15:0] CMIS_TX_HW   = 16'h3000;
