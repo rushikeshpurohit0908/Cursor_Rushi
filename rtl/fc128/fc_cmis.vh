@@ -29,6 +29,13 @@
 // matching page 02h threshold, and a low flag when it is less (Table 8-55).
 // Each flag is clear-on-read and stays set while the comparison is still
 // true. The matching mask bits are page 10h bytes 218-225 and 228-231.
+// Lower byte 9 holds the module temperature and supply flags (Table 8-9).
+// Bits [7:4] are TempMon high alarm, low alarm, high warning, low warning.
+// Bits [3:0] are the same four flags for VccMon. Temperature is signed,
+// in units of 1/256 C. A high flag is the monitor greater than the page 02h
+// threshold (bytes 128-143, Table 8-40) and a low flag is the monitor less
+// than it. Byte 32 is the matching mask. A read of byte 9 clears a latch
+// whose comparison is no longer true.
 // Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
@@ -59,6 +66,8 @@ localparam [7:0] CMIS_LOSTX    = 8'd136;
 localparam [7:0] CMIS_LOLTX    = 8'd137;
 localparam [7:0] CMIS_ALM_TX   = 8'd139;
 localparam [7:0] CMIS_ALM_RX   = 8'd149;
+localparam [7:0] CMIS_MON_FLG  = 8'd9;
+localparam [7:0] CMIS_MSK_MON  = 8'd32;
 localparam [7:0] CMIS_LOSRX    = 8'd147;
 localparam [7:0] CMIS_LOLRX    = 8'd148;
 localparam [7:0] CMIS_OPT_TX   = 8'd154;
@@ -78,8 +87,25 @@ localparam [7:0] CMIS_TH_RX_LA = 8'd194;
 localparam [7:0] CMIS_TH_RX_HW = 8'd196;
 localparam [7:0] CMIS_TH_RX_LW = 8'd198;
 // Page 02h thresholds. Nominal cage samples sit inside every window:
-// Tx 0x2710 and 0x00C8, bias 0x4E20 and 0x2710, Rx 0x1388. Rx 0 is below
-// both Rx low thresholds.
+// temperature 0x2880 (40.5 C) and supply 0x80E8 (3.3 V), Tx 0x2710 and
+// 0x00C8, bias 0x4E20 and 0x2710, Rx 0x1388. Rx 0 is below both Rx low
+// thresholds. Temperature thresholds are signed.
+localparam [7:0] CMIS_TH_T_HA  = 8'd128;
+localparam [7:0] CMIS_TH_T_LA  = 8'd130;
+localparam [7:0] CMIS_TH_T_HW  = 8'd132;
+localparam [7:0] CMIS_TH_T_LW  = 8'd134;
+localparam [7:0] CMIS_TH_V_HA  = 8'd136;
+localparam [7:0] CMIS_TH_V_LA  = 8'd138;
+localparam [7:0] CMIS_TH_V_HW  = 8'd140;
+localparam [7:0] CMIS_TH_V_LW  = 8'd142;
+localparam signed [15:0] CMIS_TEMP_HA = 16'sh4B00;
+localparam signed [15:0] CMIS_TEMP_LA = -16'sd1280;
+localparam signed [15:0] CMIS_TEMP_HW = 16'sh4600;
+localparam signed [15:0] CMIS_TEMP_LW = 16'sd0;
+localparam [15:0] CMIS_VCC_HA  = 16'h8CA0;
+localparam [15:0] CMIS_VCC_LA  = 16'h7530;
+localparam [15:0] CMIS_VCC_HW  = 16'h875A;
+localparam [15:0] CMIS_VCC_LW  = 16'h7A76;
 localparam [15:0] CMIS_TX_HA   = 16'h4000;
 localparam [15:0] CMIS_TX_LA   = 16'h0008;
 localparam [15:0] CMIS_TX_HW   = 16'h3000;

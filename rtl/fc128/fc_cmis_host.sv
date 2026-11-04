@@ -27,7 +27,9 @@
 //     unmasked flag can assert the module interrupt. Bits [7:1] of each
 //     mask byte stay as the module set them. The five link flags use bytes
 //     214, 215, 216, 226, and 227. The twelve alarm flags use bytes 218-225
-//     and 228-231.
+//     and 228-231. Lower byte 32 is the module temperature and supply mask.
+//     The host writes that whole byte from mask_mon. Byte 9, captured with
+//     the lower-memory poll, is the eight clear-on-read flags.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -54,6 +56,7 @@ module fc_cmis_host #(
   input  logic        mask_los_rx,
   input  logic        mask_lol_rx,
   input  logic [11:0] mask_alm,
+  input  logic [7:0]  mask_mon,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -133,6 +136,8 @@ module fc_cmis_host #(
   localparam [4:0] OP_MON_RX = 5'd29;
   localparam [4:0] OP_AL_TX  = 5'd30;
   localparam [4:0] OP_AL_RX  = 5'd31;
+  localparam [5:0] OP_MM_RD  = 6'd32;
+  localparam [5:0] OP_MM_WR  = 6'd33;
   localparam [4:0] MK_LAST   = 5'd16;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
@@ -141,10 +146,11 @@ module fc_cmis_host #(
   logic        rx_valid;
   logic [4:0]  rx_index;
   logic [7:0]  cap [0:31];
-  logic [4:0]  op;
+  logic [5:0]  op;
   logic        launch, inflight, wait_gap;
   logic        ctrl_ok, tx_ok, sq_ok, dp_ok, as_ok, st_fresh, sw_pend, ap_pend;
-  logic        mk_ok;
+  logic        mk_ok, mm_ok;
+  logic [7:0]  mm_rb, mm_snap;
   logic [7:0]  as_rb;
   logic [4:0]  mk_i;
   logic [16:0] mk_snap;
@@ -240,6 +246,9 @@ module fc_cmis_host #(
       as_ok     <= 1'b0;
       as_rb     <= 8'h00;
       mk_ok     <= 1'b0;
+      mm_ok     <= 1'b0;
+      mm_rb     <= 8'hFF;
+      mm_snap   <= 8'hFF;
       mk_i      <= 5'd0;
       mk_snap   <= 17'h1FFFF;
       mk_fail_rb   <= 1'b1;
@@ -311,6 +320,7 @@ module fc_cmis_host #(
           dp_ok    <= 1'b0;
           as_ok    <= 1'b0;
           mk_ok    <= 1'b0;
+          mm_ok    <= 1'b0;
           st_fresh <= 1'b0;
           dp_state <= CMIS_DP_DEACT;
           dp_activated <= 1'b0;
@@ -557,6 +567,23 @@ module fc_cmis_host #(
               dp_valid   <= 1'b1;
               st_fresh   <= 1'b1;
             end
+            OP_MM_RD: begin
+              if (cap[0] == mm_snap) begin
+                mm_rb <= mm_snap;
+                mm_ok <= 1'b1;
+              end else begin
+                op        <= OP_MM_WR;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_MSK_MON;
+                cmd_wdata <= mm_snap;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_MM_WR: begin
+              mm_rb <= mm_snap;
+              mm_ok <= 1'b1;
+            end
             OP_MK_PG: begin
               mk_i      <= 5'd0;
               op        <= OP_MK_RD;
@@ -627,6 +654,7 @@ module fc_cmis_host #(
             dp_ok   <= 1'b0;
             as_ok   <= 1'b0;
             mk_ok   <= 1'b0;
+            mm_ok   <= 1'b0;
             st_fresh <= 1'b0;
             dp_state <= CMIS_DP_DEACT;
             dp_activated <= 1'b0;
@@ -701,6 +729,13 @@ module fc_cmis_host #(
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!mm_ok || mask_mon != mm_rb) begin
+          mm_snap   <= mask_mon;
+          op        <= OP_MM_RD;
+          cmd_write <= 1'b0;
+          cmd_addr  <= CMIS_MSK_MON;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else if (!st_fresh) begin

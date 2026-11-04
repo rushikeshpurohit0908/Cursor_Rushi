@@ -23,6 +23,7 @@ module tb_fc_cmis;
   logic mask_los_rx = 1;
   logic mask_lol_rx = 1;
   logic [11:0] mask_alm = 12'hFFF;
+  logic [7:0] mask_mon = 8'hFF;
   logic tx_fail = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -62,6 +63,7 @@ module tb_fc_cmis;
     .mask_lol_tx(mask_lol_tx), .mask_los_rx(mask_los_rx),
     .mask_lol_rx(mask_lol_rx),
     .mask_alm(mask_alm),
+    .mask_mon(mask_mon),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -620,6 +622,137 @@ module tb_fc_cmis;
       errors = errors + 1;
     end
 
+    // Nominal 40.5 C and 3.3 V sit inside the page 02h windows. Byte 9 stays
+    // clear, and the mask byte stays FFh, so IntL stays high.
+    begin : mon_quiet
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h00 && mod.mem[CMIS_MSK_MON] == 8'hFF &&
+            int_deasserted && int_n)
+          disable mon_quiet;
+      end
+      $display("FAIL module monitors quiet %h mask %h", flag1, mod.mem[CMIS_MSK_MON]);
+      errors = errors + 1;
+    end
+    temp_s16 = 16'h5000;
+    begin : mon_thi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'hA0)
+          disable mon_thi;
+      end
+      $display("FAIL temp high %h", flag1);
+      errors = errors + 1;
+    end
+    // Exactly 75 C is the high-alarm threshold, so only the high warning
+    // remains. The high-alarm latch clears on the next read.
+    temp_s16 = 16'h4B00;
+    begin : mon_teq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h20)
+          disable mon_teq;
+      end
+      $display("FAIL temp equal %h", flag1);
+      errors = errors + 1;
+    end
+    temp_s16 = 16'hF000;
+    begin : mon_tlo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h50)
+          disable mon_tlo;
+      end
+      $display("FAIL temp low %h", flag1);
+      errors = errors + 1;
+    end
+    temp_s16 = 16'hFF00;
+    begin : mon_tlw
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h10)
+          disable mon_tlw;
+      end
+      $display("FAIL temp warning %h", flag1);
+      errors = errors + 1;
+    end
+    temp_s16 = 16'h2880;
+    begin : mon_tclr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h00)
+          disable mon_tclr;
+      end
+      $display("FAIL temp clear %h", flag1);
+      errors = errors + 1;
+    end
+    vcc_u16 = 16'h9000;
+    begin : mon_vhi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h0A)
+          disable mon_vhi;
+      end
+      $display("FAIL vcc high %h", flag1);
+      errors = errors + 1;
+    end
+    vcc_u16 = 16'h8CA0;
+    begin : mon_veq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h02)
+          disable mon_veq;
+      end
+      $display("FAIL vcc equal %h", flag1);
+      errors = errors + 1;
+    end
+    vcc_u16 = 16'h7000;
+    begin : mon_vlo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h05)
+          disable mon_vlo;
+      end
+      $display("FAIL vcc low %h", flag1);
+      errors = errors + 1;
+    end
+    mask_mon = 8'hFE;
+    begin : mon_int
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h05 && mod.mem[CMIS_MSK_MON] == 8'hFE &&
+            !int_deasserted && !int_n)
+          disable mon_int;
+      end
+      $display("FAIL vcc int %h mask %h int %b pin %b",
+               flag1, mod.mem[CMIS_MSK_MON], int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    mask_mon = 8'hFF;
+    vcc_u16 = 16'h80E8;
+    begin : mon_done
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag1 == 8'h00 && mod.mem[CMIS_MSK_MON] == 8'hFF &&
+            int_deasserted && int_n)
+          disable mon_done;
+      end
+      $display("FAIL module monitor restore %h mask %h int %b",
+               flag1, mod.mem[CMIS_MSK_MON], int_deasserted);
+      errors = errors + 1;
+    end
+
     if (errors == 0)
       $display("PASS tb_fc_cmis");
     else
@@ -628,7 +761,7 @@ module tb_fc_cmis;
   end
 
   initial begin
-    for (guard = 0; guard < 8000000; guard = guard + 1)
+    for (guard = 0; guard < 12000000; guard = guard + 1)
       @(posedge clk);
     $display("FAIL tb_fc_cmis timeout");
     $finish;
