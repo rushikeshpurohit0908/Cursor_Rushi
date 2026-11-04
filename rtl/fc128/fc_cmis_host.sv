@@ -40,6 +40,10 @@
 //     from mask_a3 after the byte 33 mask and before the status pass.
 //     Byte 11, captured with the same lower-memory poll, is the eight
 //     Aux3 and Custom flags.
+//   * after that byte 34 mask is current, and before the page 11h status
+//     pass, select page 00h and read VendorName at bytes 128-143 and
+//     VendorPN at bytes 148-163. Each field is read once per insertion.
+//     Removing the module clears both words and the read runs again.
 //   * after the page 11h Rx-power flags, read lower bytes 18-21, then
 //     bytes 22-25. Those are Aux1Mon, Aux2Mon, Aux3Mon, and CustomMon.
 //     The bytes 128-134 read is left as it is, and the lower-memory poll
@@ -116,6 +120,8 @@ module fc_cmis_host #(
   output logic [15:0] aux2_s16,
   output logic [15:0] aux3_s16,
   output logic [15:0] cust_s16,
+  output logic [127:0] vendor_name,
+  output logic [127:0] vendor_pn,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -167,6 +173,9 @@ module fc_cmis_host #(
   localparam [5:0] OP_A3_RD  = 6'd39;
   localparam [5:0] OP_A3_WR  = 6'd40;
   localparam [5:0] OP_A3     = 6'd41;
+  localparam [5:0] OP_VN_PG  = 6'd42;
+  localparam [5:0] OP_VN_NM  = 6'd43;
+  localparam [5:0] OP_VN_PN  = 6'd44;
   localparam [4:0] MK_LAST   = 5'd16;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
@@ -178,7 +187,7 @@ module fc_cmis_host #(
   logic [5:0]  op;
   logic        launch, inflight, wait_gap;
   logic        ctrl_ok, tx_ok, sq_ok, dp_ok, as_ok, st_fresh, sw_pend, ap_pend;
-  logic        mk_ok, mm_ok, sc_ok, ax_ok, a3_ok;
+  logic        mk_ok, mm_ok, sc_ok, ax_ok, a3_ok, vn_ok;
   logic [7:0]  mm_rb, mm_snap;
   logic        sc_rb, sc_snap;
   logic [7:0]  ax_rb, ax_snap;
@@ -290,6 +299,7 @@ module fc_cmis_host #(
       a3_ok     <= 1'b0;
       a3_rb     <= 8'hFF;
       a3_snap   <= 8'hFF;
+      vn_ok     <= 1'b0;
       mk_i      <= 5'd0;
       mk_snap   <= 17'h1FFFF;
       mk_fail_rb   <= 1'b1;
@@ -340,6 +350,8 @@ module fc_cmis_host #(
       aux2_s16    <= 16'h0000;
       aux3_s16    <= 16'h0000;
       cust_s16    <= 16'h0000;
+      vendor_name <= 128'h0;
+      vendor_pn   <= 128'h0;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -369,6 +381,7 @@ module fc_cmis_host #(
           sc_ok    <= 1'b0;
           ax_ok    <= 1'b0;
           a3_ok    <= 1'b0;
+          vn_ok    <= 1'b0;
           st_fresh <= 1'b0;
           dp_state <= CMIS_DP_DEACT;
           dp_activated <= 1'b0;
@@ -392,6 +405,8 @@ module fc_cmis_host #(
           aux2_s16      <= 16'h0000;
           aux3_s16      <= 16'h0000;
           cust_s16      <= 16'h0000;
+          vendor_name   <= 128'h0;
+          vendor_pn     <= 128'h0;
           wait_gap <= 1'b1;
           gapcnt   <= GAPW[15:0];
         end else begin
@@ -637,6 +652,31 @@ module fc_cmis_host #(
               dp_valid <= 1'b1;
               st_fresh <= 1'b1;
             end
+            OP_VN_PG: begin
+              op        <= OP_VN_NM;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_VNAME;
+              cmd_rlen  <= 6'd16;
+              launch    <= 1'b1;
+            end
+            OP_VN_NM: begin
+              vendor_name <= {cap[0], cap[1], cap[2], cap[3],
+                              cap[4], cap[5], cap[6], cap[7],
+                              cap[8], cap[9], cap[10], cap[11],
+                              cap[12], cap[13], cap[14], cap[15]};
+              op        <= OP_VN_PN;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_VPN;
+              cmd_rlen  <= 6'd16;
+              launch    <= 1'b1;
+            end
+            OP_VN_PN: begin
+              vendor_pn <= {cap[0], cap[1], cap[2], cap[3],
+                            cap[4], cap[5], cap[6], cap[7],
+                            cap[8], cap[9], cap[10], cap[11],
+                            cap[12], cap[13], cap[14], cap[15]};
+              vn_ok <= 1'b1;
+            end
             OP_A3_RD: begin
               if (cap[0] == a3_snap) begin
                 a3_rb <= a3_snap;
@@ -779,6 +819,7 @@ module fc_cmis_host #(
             sc_ok   <= 1'b0;
             ax_ok   <= 1'b0;
             a3_ok   <= 1'b0;
+            vn_ok   <= 1'b0;
             st_fresh <= 1'b0;
             dp_state <= CMIS_DP_DEACT;
             dp_activated <= 1'b0;
@@ -802,6 +843,8 @@ module fc_cmis_host #(
             aux2_s16      <= 16'h0000;
             aux3_s16      <= 16'h0000;
             cust_s16      <= 16'h0000;
+            vendor_name   <= 128'h0;
+            vendor_pn     <= 128'h0;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -885,6 +928,13 @@ module fc_cmis_host #(
           op        <= OP_A3_RD;
           cmd_write <= 1'b0;
           cmd_addr  <= CMIS_MSK_A3;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!vn_ok) begin
+          op        <= OP_VN_PG;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_VEND_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else if (!st_fresh) begin

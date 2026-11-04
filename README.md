@@ -73,3 +73,11 @@ The top-level CSR (client clock, word addresses) is:
 | `0x31C + 32*port` | `{Aux2[15:0], Aux1[15:0]}`. Aux1 is laser temperature in 1/256 °C. Aux2 is TEC current in units of 100/32767 percent |
 | `0x400 + 32*port` | Aux3/Custom alarm masks `[7:0]`, same order as byte 11 (1 = masked, reset `8'hFF`) |
 | `0x404 + 32*port` | `{Custom[15:0], Aux3[15:0]}`. Aux3 is Vcc2 in 100 µV. Custom is laser frequency error in MHz |
+| `0x500 + 32*port` | VendorName bytes 128-131. Byte 128 is the MSB |
+| `0x504 + 32*port` | VendorName bytes 132-135 |
+| `0x508 + 32*port` | VendorName bytes 136-139 |
+| `0x50C + 32*port` | VendorName bytes 140-143 |
+| `0x510 + 32*port` | VendorPN bytes 148-151. Byte 148 is the MSB |
+| `0x514 + 32*port` | VendorPN bytes 152-155 |
+| `0x518 + 32*port` | VendorPN bytes 156-159 |
+| `0x51C + 32*port` | VendorPN bytes 160-163 |

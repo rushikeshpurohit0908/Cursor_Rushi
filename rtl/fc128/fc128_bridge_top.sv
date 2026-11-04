@@ -36,8 +36,10 @@
 // is the Aux3/Custom alarm flags, already in that same register at bits
 // [31:24]. `0x400 + 32*port` is the byte 34 mask, reset to `8'hFF`.
 // `0x404 + 32*port` is `{Custom, Aux3}`: additional supply Vcc2 in 100 uV
-// and laser frequency error in 1 MHz. An unmasked
-// flag pulls IntL low. The staged
+// and laser frequency error in 1 MHz. Page 00h VendorName is
+// `0x500 + 32*port` through `0x50C`, and VendorPN is `0x510` through
+// `0x51C`, four big-endian words each. Byte 128 is the MSB of `0x500`.
+// An unmasked flag pulls IntL low. The staged
 // AppSel byte is written at +0x1C; the read side returns that request, the
 // active AppSel, and ConfigStatus. The line rate for that port is at +0x18:
 // 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 is set while that write is
@@ -234,6 +236,8 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][15:0] cmis_aux1;
   logic [N_CLIENT-1:0][15:0] cmis_aux2;
   logic [N_CLIENT-1:0][15:0] cmis_aux3;
+  logic [N_CLIENT-1:0][127:0] cmis_vname;
+  logic [N_CLIENT-1:0][127:0] cmis_vpn;
   logic [N_CLIENT-1:0][15:0] cmis_cust;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
@@ -385,6 +389,8 @@ module fc128_bridge_top #(
         .aux2_s16(cmis_aux2[gi]),
         .aux3_s16(cmis_aux3[gi]),
         .cust_s16(cmis_cust[gi]),
+        .vendor_name(cmis_vname[gi]),
+        .vendor_pn(cmis_vpn[gi]),
         .scl_oe(cmis_scl_oe[gi]),
         .sda_oe(cmis_sda_oe[gi]),
         .scl_i(cmis_scl_i[gi]),
@@ -503,9 +509,13 @@ module fc128_bridge_top #(
 
   logic [31:0] rdata_mux;
   logic [2:0]  port_idx;
+  logic [127:0] vname_word;
+  logic [127:0] vpn_word;
   always_comb begin
     rdata_mux = 32'h0;
     port_idx  = csr_addr[7:5];
+    vname_word = cmis_vname[port_idx];
+    vpn_word   = cmis_vpn[port_idx];
     case (csr_addr)
       12'h000: rdata_mux = ID_WORD;
       12'h004: rdata_mux = VER_WORD;
@@ -581,6 +591,18 @@ module fc128_bridge_top #(
           case (csr_addr[4:2])
             3'd0: rdata_mux = {24'h0, cmis_ma3[port_idx]};
             3'd1: rdata_mux = {cmis_cust[port_idx], cmis_aux3[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h5 && csr_addr[7:5] < N_CLIENT) begin
+          case (csr_addr[4:2])
+            3'd0: rdata_mux = vname_word[127:96];
+            3'd1: rdata_mux = vname_word[95:64];
+            3'd2: rdata_mux = vname_word[63:32];
+            3'd3: rdata_mux = vname_word[31:0];
+            3'd4: rdata_mux = vpn_word[127:96];
+            3'd5: rdata_mux = vpn_word[95:64];
+            3'd6: rdata_mux = vpn_word[63:32];
+            3'd7: rdata_mux = vpn_word[31:0];
             default: rdata_mux = 32'h0;
           endcase
         end

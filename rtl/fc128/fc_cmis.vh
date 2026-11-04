@@ -62,6 +62,9 @@
 // frequency error must not set a high alarm. Byte 34 is the matching
 // mask, the whole byte. A read of byte 11 clears a latch whose comparison
 // is no longer true. Bytes 22-25 are not clear-on-read.
+// Page 00h bytes 128-143 are VendorName and bytes 148-163 are VendorPN.
+// Each field is 16 space-padded ASCII characters. Byte 128 is the first
+// character. Writes to those bytes do not change the value.
 // Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
@@ -100,6 +103,13 @@ localparam [7:0] CMIS_AUX1_MON = 8'd18;
 localparam [7:0] CMIS_AUX2_MON = 8'd20;
 localparam [7:0] CMIS_AUX3_MON = 8'd22;
 localparam [7:0] CMIS_CUST_MON = 8'd24;
+localparam [7:0] CMIS_VEND_PAGE = 8'h00;
+localparam [7:0] CMIS_VNAME = 8'd128;
+localparam [7:0] CMIS_VPN   = 8'd148;
+// Page 00h, space-padded. Byte 128 is the MSB of the first word.
+// "ALTERA" and "SFP112-128GFC".
+localparam [127:0] CMIS_VENDOR_NAME = 128'h414C5445524120202020202020202020;
+localparam [127:0] CMIS_VENDOR_PN   = 128'h5346503131322D313238474643202020;
 localparam [7:0] CMIS_MSK_SC   = 8'd31;
 localparam [7:0] CMIS_MSK_MON  = 8'd32;
 localparam [7:0] CMIS_MSK_AUX  = 8'd33;
