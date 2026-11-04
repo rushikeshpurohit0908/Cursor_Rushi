@@ -19,7 +19,12 @@
 // FailureFlagTx, LOSFlagTx, and CDRLOLFlagTx latches. Bytes 147 and 148 are
 // LOSFlagRx and CDRLOLFlagRx. Each is clear-on-read. The matching mask bits
 // are page 10h bytes 214, 215, 216, 226, and 227, and a 1 masks that flag
-// out of the interrupt. Lanes in the map are numbered from 1.
+// out of the interrupt. Bytes 154-155, 170-171, and 186-187 are the lane-1
+// OpticalPowerTx, LaserBiasTx, and OpticalPowerRx monitors (Table 8-79).
+// Power is an unsigned count of 0.1 uW. Bias is an unsigned count of 2 uA
+// (page 01h byte 160 scaling factor 1). The first byte of each pair is the
+// MSB. These monitors are not clear-on-read. Lanes in the map are numbered
+// from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
 // codes in Table 4-7: 128GFC-SM, 64GFC-SM, and 32GFC-SM.
@@ -49,6 +54,9 @@ localparam [7:0] CMIS_LOSTX    = 8'd136;
 localparam [7:0] CMIS_LOLTX    = 8'd137;
 localparam [7:0] CMIS_LOSRX    = 8'd147;
 localparam [7:0] CMIS_LOLRX    = 8'd148;
+localparam [7:0] CMIS_OPT_TX   = 8'd154;
+localparam [7:0] CMIS_BIAS_TX  = 8'd170;
+localparam [7:0] CMIS_OPT_RX   = 8'd186;
 localparam [7:0] CMIS_CFGSTAT  = 8'd202;
 localparam [7:0] CMIS_ACS0     = 8'd206;
 localparam [7:0] CMIS_MSK_FAIL = 8'd214;

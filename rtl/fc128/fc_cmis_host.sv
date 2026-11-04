@@ -18,7 +18,10 @@
 //   * select page 11h and read the lane 1 data path state, output status,
 //     ConfigStatus, the active AppSel, and DPInitPending. The same pass
 //     reads the clear-on-read lane flags: Tx failure, Tx LOS, Tx CDR LOL,
-//     Rx LOS, and Rx CDR LOL.
+//     Rx LOS, and Rx CDR LOL. It also reads the lane-1 monitors:
+//     OpticalPowerTx at bytes 154-155, LaserBiasTx at bytes 170-171, and
+//     OpticalPowerRx at bytes 186-187. Those three are live values, not
+//     clear-on-read latches.
 //   * on page 10h, read-modify-write bit 0 of the five lane-flag masks so
 //     an unmasked flag can assert the module interrupt. Bits [7:1] of each
 //     mask byte stay as the module set them.
@@ -81,6 +84,9 @@ module fc_cmis_host #(
   output logic [7:0]  flag3,
   output logic [15:0] temp_s16,
   output logic [15:0] vcc_u16,
+  output logic [15:0] opt_tx_u16,
+  output logic [15:0] bias_tx_u16,
+  output logic [15:0] opt_rx_u16,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -117,6 +123,9 @@ module fc_cmis_host #(
   localparam [4:0] OP_MK_WR  = 5'd24;
   localparam [4:0] OP_FL_TX  = 5'd25;
   localparam [4:0] OP_FL_RX  = 5'd26;
+  localparam [4:0] OP_MON_TX = 5'd27;
+  localparam [4:0] OP_MON_BI = 5'd28;
+  localparam [4:0] OP_MON_RX = 5'd29;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -234,6 +243,9 @@ module fc_cmis_host #(
       flag3 <= 8'h00;
       temp_s16 <= 16'h0000;
       vcc_u16  <= 16'h0000;
+      opt_tx_u16  <= 16'h0000;
+      bias_tx_u16 <= 16'h0000;
+      opt_rx_u16  <= 16'h0000;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -274,6 +286,9 @@ module fc_cmis_host #(
           flag_lol_tx   <= 1'b0;
           flag_los_rx   <= 1'b0;
           flag_lol_rx   <= 1'b0;
+          opt_tx_u16    <= 16'h0000;
+          bias_tx_u16   <= 16'h0000;
+          opt_rx_u16    <= 16'h0000;
           wait_gap <= 1'b1;
           gapcnt   <= GAPW[15:0];
         end else begin
@@ -457,8 +472,32 @@ module fc_cmis_host #(
             OP_FL_RX: begin
               flag_los_rx <= cap[0][0];
               flag_lol_rx <= cap[1][0];
-              dp_valid    <= 1'b1;
-              st_fresh    <= 1'b1;
+              op        <= OP_MON_TX;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_OPT_TX;
+              cmd_rlen  <= 6'd2;
+              launch    <= 1'b1;
+            end
+            OP_MON_TX: begin
+              opt_tx_u16 <= {cap[0], cap[1]};
+              op        <= OP_MON_BI;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_BIAS_TX;
+              cmd_rlen  <= 6'd2;
+              launch    <= 1'b1;
+            end
+            OP_MON_BI: begin
+              bias_tx_u16 <= {cap[0], cap[1]};
+              op        <= OP_MON_RX;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_OPT_RX;
+              cmd_rlen  <= 6'd2;
+              launch    <= 1'b1;
+            end
+            OP_MON_RX: begin
+              opt_rx_u16 <= {cap[0], cap[1]};
+              dp_valid   <= 1'b1;
+              st_fresh   <= 1'b1;
             end
             OP_MK_PG: begin
               mk_i      <= 3'd0;
@@ -559,6 +598,9 @@ module fc_cmis_host #(
             flag_lol_tx   <= 1'b0;
             flag_los_rx   <= 1'b0;
             flag_lol_rx   <= 1'b0;
+            opt_tx_u16    <= 16'h0000;
+            bias_tx_u16   <= 16'h0000;
+            opt_rx_u16    <= 16'h0000;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
