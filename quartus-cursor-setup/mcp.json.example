@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "quartus-mcp": {
+      "type": "stdio",
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\YOUR_WINDOWS_NAME\\AppData\\Roaming\\npm\\node_modules\\@altera\\quartus-mcp\\dist\\index.mjs"
+      ],
+      "env": {
+        "LM_LICENSE_FILE": "C:\\altera_pro\\your-license.dat"
+      }
+    },
+    "programmer-mcp": {
+      "type": "stdio",
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\YOUR_WINDOWS_NAME\\AppData\\Roaming\\npm\\node_modules\\@altera\\quartus-programmer-mcp\\dist\\index.mjs"
+      ],
+      "env": {
+        "LM_LICENSE_FILE": "C:\\altera_pro\\your-license.dat"
+      }
+    }
+  }
+}
