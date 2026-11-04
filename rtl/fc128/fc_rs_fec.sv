@@ -1,8 +1,8 @@
 // RS(255,239) codec over GF(2^8), polynomial 0x11D, roots alpha^1..alpha^16.
 // Shortened messages (1..239 data bytes) are encoded directly and decoded over
-// the transmitted length K+16. This is the soft FEC block in the FC128 PoC.
-// Production FC-PI-8 uses an RS(544,514)-class code; the start/done/RAM
-// handshake is the drop-in point for that engine.
+// the transmitted length K+16. The frame pipe uses this engine: its buffer is
+// 256 bytes. FC-PI-8 RS(544,514) is fc_rs544, same start/done/RAM handshake
+// with 10-bit symbols.
 module fc_rs_fec (
   input  logic       clk,
   input  logic       rst_n,
