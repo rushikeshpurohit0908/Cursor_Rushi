@@ -24,6 +24,7 @@ module tb_fc_cmis;
   logic mask_lol_rx = 1;
   logic [11:0] mask_alm = 12'hFFF;
   logic [7:0] mask_mon = 8'hFF;
+  logic mask_sc = 1;
   logic tx_fail = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -64,6 +65,7 @@ module tb_fc_cmis;
     .mask_lol_rx(mask_lol_rx),
     .mask_alm(mask_alm),
     .mask_mon(mask_mon),
+    .mask_sc(mask_sc),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -750,6 +752,199 @@ module tb_fc_cmis;
       end
       $display("FAIL module monitor restore %h mask %h int %b",
                flag1, mod.mem[CMIS_MSK_MON], int_deasserted);
+      errors = errors + 1;
+    end
+
+    // ModuleStateChangedFlag is byte 8 bit 0. It latches the entry into
+    // ModuleLowPwr, ModuleReady, or ModuleFault, then clears on read. Power-up
+    // and power-down do not latch it. Byte 31 bit 0 is the mask.
+    begin : sc_quiet
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && present && mod_state == CMIS_ST_RDY &&
+            flag0 == 8'h00 && !flag_state && int_deasserted && int_n &&
+            mod.mem[CMIS_MSK_SC] == 8'hFF)
+          disable sc_quiet;
+      end
+      $display("FAIL state flag idle %h pin %b mask %h",
+               flag0, int_n, mod.mem[CMIS_MSK_SC]);
+      errors = errors + 1;
+    end
+    mask_sc = 0;
+    begin : sc_unmask
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod.mem[CMIS_MSK_SC] == 8'hFE && int_deasserted && int_n)
+          disable sc_unmask;
+      end
+      $display("FAIL state mask %h int %b", mod.mem[CMIS_MSK_SC], int_n);
+      errors = errors + 1;
+    end
+    low_pwr_sw = 1;
+    begin : sc_down
+      integer k;
+      reg saw_dn, bad_dn, saw_pin, saw_low;
+      saw_dn = 0;
+      bad_dn = 0;
+      saw_pin = 0;
+      saw_low = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.mod_state_q == CMIS_ST_DN) begin
+          saw_dn = 1;
+          if (flag_state)
+            bad_dn = 1;
+        end
+        // The pin falls while the latch is set. The poll that reports it
+        // also reads byte 8, so the pin is high again by the next idle.
+        if (mod.mod_state_q == CMIS_ST_LOW && flag_state && !int_n)
+          saw_pin = 1;
+        if (saw_dn && !bad_dn && saw_pin && !busy && mod_state == CMIS_ST_LOW &&
+            flag0[0] && !int_deasserted)
+          saw_low = 1;
+        if (saw_low)
+          disable sc_down;
+      end
+      $display("FAIL state down dn %b bad %b low %b flag %h int %b",
+               saw_dn, bad_dn, saw_low, flag0, int_n);
+      errors = errors + 1;
+    end
+    begin : sc_low_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_LOW && flag0 == 8'h00 &&
+            !flag_state && int_deasserted && int_n)
+          disable sc_low_clr;
+      end
+      $display("FAIL state low clear %h pin %b", flag0, int_n);
+      errors = errors + 1;
+    end
+    low_pwr_sw = 0;
+    begin : sc_up
+      integer k;
+      reg saw_up, bad_up, saw_pin, saw_rdy;
+      saw_up = 0;
+      bad_up = 0;
+      saw_pin = 0;
+      saw_rdy = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.mod_state_q == CMIS_ST_UP && !flag_state)
+          saw_up = 1;
+        if (mod.mod_state_q == CMIS_ST_UP && flag_state)
+          bad_up = 1;
+        if (mod.mod_state_q == CMIS_ST_RDY && flag_state && !int_n)
+          saw_pin = 1;
+        if (saw_up && !bad_up && saw_pin && !busy && mod_state == CMIS_ST_RDY &&
+            flag0[0] && !int_deasserted)
+          saw_rdy = 1;
+        if (saw_rdy)
+          disable sc_up;
+      end
+      $display("FAIL state up up %b bad %b rdy %b flag %h int %b",
+               saw_up, bad_up, saw_rdy, flag0, int_n);
+      errors = errors + 1;
+    end
+    begin : sc_rdy_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_RDY && flag0 == 8'h00 &&
+            !flag_state && int_deasserted && int_n)
+          disable sc_rdy_clr;
+      end
+      $display("FAIL state ready clear %h", flag0);
+      errors = errors + 1;
+    end
+    // A software reset with LowPwrS already false skips the LowPwr flag.
+    begin : sc_sw
+      integer k;
+      reg bad_low, saw_pin, saw_rdy;
+      bad_low = 0;
+      saw_pin = 0;
+      saw_rdy = 0;
+      @(negedge clk);
+      sw_pulse = 1;
+      @(negedge clk);
+      sw_pulse = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.mod_state_q == CMIS_ST_LOW && flag_state)
+          bad_low = 1;
+        if (mod.mod_state_q == CMIS_ST_UP && flag_state)
+          bad_low = 1;
+        if (mod.mod_state_q == CMIS_ST_RDY && flag_state && !int_n)
+          saw_pin = 1;
+        if (!bad_low && saw_pin && !busy && mod_state == CMIS_ST_RDY &&
+            flag0[0] && !int_deasserted)
+          saw_rdy = 1;
+        if (saw_rdy)
+          disable sc_sw;
+      end
+      $display("FAIL state sw bad %b rdy %b flag %h", bad_low, saw_rdy, flag0);
+      errors = errors + 1;
+    end
+    begin : sc_sw_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_RDY && flag0 == 8'h00 && !flag_state)
+          disable sc_sw_clr;
+      end
+      $display("FAIL state sw clear %h", flag0);
+      errors = errors + 1;
+    end
+    mask_sc = 1;
+    begin : sc_remask
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_RDY && flag0 == 8'h00 &&
+            mod.mem[CMIS_MSK_SC] == 8'hFF && int_deasserted && int_n)
+          disable sc_remask;
+      end
+      $display("FAIL state remask %h", mod.mem[CMIS_MSK_SC]);
+      errors = errors + 1;
+    end
+    force_fault = 1;
+    begin : sc_fault
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_FLT && flag0[0] &&
+            int_deasserted && int_n && mod.mem[CMIS_MSK_SC][0])
+          disable sc_fault;
+      end
+      $display("FAIL state fault flag %h mask %h int %b",
+               flag0, mod.mem[CMIS_MSK_SC], int_n);
+      errors = errors + 1;
+    end
+    begin : sc_fault_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_FLT && flag0 == 8'h00 &&
+            !flag_state && int_deasserted && int_n)
+          disable sc_fault_clr;
+      end
+      $display("FAIL state fault held %h", flag0);
+      errors = errors + 1;
+    end
+    force_fault = 0;
+    mask_sc = 1;
+    begin : sc_done
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && mod_state == CMIS_ST_RDY && flag0 == 8'h00 &&
+            mod.mem[CMIS_MSK_SC] == 8'hFF && int_deasserted && int_n)
+          disable sc_done;
+      end
+      $display("FAIL state restore %h mask %h state %0d",
+               flag0, mod.mem[CMIS_MSK_SC], mod_state);
       errors = errors + 1;
     end
 

@@ -427,6 +427,16 @@ module tb_fc128_bridge;
       $display("FAIL cmis power port1 %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h314, rdw);
+    if (rdw !== 32'h0000_0001) begin
+      $display("FAIL cmis state mask %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h334, rdw);
+    if (rdw !== 32'h0000_0001) begin
+      $display("FAIL cmis state mask port1 %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h014, 32'hA5A5_1234);
     csr_read_t(12'h014, rdw);
     if (rdw !== 32'hA5A5_1234) begin
@@ -918,16 +928,52 @@ module tb_fc128_bridge;
       $display("FAIL cmis temp clear %h", rdw);
       errors = errors + 1;
     end
+    csr_write_t(12'h314, 32'h0);
+    csr_read_t(12'h314, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis state mask write %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h200, 32'h0000_3E23);
     begin : cmis_lp
       integer k;
-      for (k = 0; k < 400000; k = k + 1) begin
+      reg saw_pin, saw_flag;
+      saw_pin = 0;
+      saw_flag = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
         @(posedge clk_client);
+        if (!sfp_int_n)
+          saw_pin = 1;
         csr_read_t(12'h204, rdw);
-        if (rdw[20] && rdw[18:16] == 3'd1 && rdw[27])
+        // Bit 19 is the sampled InterruptDeasserted bit. The live pin rises
+        // again when that same poll reads byte 8.
+        if (saw_pin && rdw[20] && rdw[18:16] == 3'd1 && rdw[27] && !rdw[19]) begin
+          csr_read_t(12'h20C, rdw);
+          if (rdw[0])
+            saw_flag = 1;
+        end
+        if (saw_flag)
           disable cmis_lp;
       end
-      $display("FAIL cmis low power %h", rdw);
+      $display("FAIL cmis low power %h flag %b", rdw, saw_flag);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h314, 32'h1);
+    begin : cmis_sc_mask
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h204, rdw);
+        if (rdw[20] && rdw[18:16] == 3'd1 && rdw[19] && rdw[24]) begin
+          csr_read_t(12'h20C, rdw);
+          if (rdw[0] == 1'b0) begin
+            csr_read_t(12'h314, rdw);
+            if (rdw == 32'h1)
+              disable cmis_sc_mask;
+          end
+        end
+      end
+      $display("FAIL cmis state mask restore %h", rdw);
       errors = errors + 1;
     end
 
