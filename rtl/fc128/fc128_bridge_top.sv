@@ -9,9 +9,9 @@
 // mapping of the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox,
 // link init). Control blocks carry the FC-FS ordered set in [31:0]. CSR bit 5
 // packs each system direction into Clause 119 256b/257b words. FC-PI-8
-// RS(544,514) over GF(2^10) is fc_rs544. A codeword is 544 ten-bit symbols,
-// so that engine stays off the 256-byte frame RAM. Ordered sets are in
-// fc128_defs.vh.
+// RS(544,514) over GF(2^10) is fc_rs544. CSR bit 6 attaches it to those
+// packed groups: twenty 257-bit words, then five sync-11 parity beats.
+// The frame RAM stays on RS(255,239). Ordered sets are in fc128_defs.vh.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -59,6 +59,7 @@ module fc128_bridge_top #(
   logic        scrambler_en;
   logic        sec_protect;
   logic        xcode_en;
+  logic        rs544_en;
   logic [31:0] scratch;
   logic [N_CLIENT-1:0] port_en;
   logic        credit_load;
@@ -122,6 +123,8 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][31:0] p_crc;
   logic [N_CLIENT-1:0][31:0] p_corr;
   logic [N_CLIENT-1:0][31:0] p_fail;
+  logic [N_CLIENT-1:0][15:0] p_rs_corr;
+  logic [N_CLIENT-1:0][15:0] p_rs_fail;
   logic [N_CLIENT-1:0]       p_client_up;
   logic [N_CLIENT-1:0]       p_system_up;
   logic [N_CLIENT-1:0]       p_sys_lock;
@@ -166,6 +169,7 @@ module fc128_bridge_top #(
         .scrambler_en    (scrambler_en),
         .scrambler_en_s  (scrambler_en_s),
         .xcode_en        (xcode_en),
+        .rs544_en        (rs544_en),
         .credit_load     (credit_load),
         .credit_cli_i    (credit_cli_i),
         .credit_sys_i    (credit_sys_i),
@@ -193,6 +197,8 @@ module fc128_bridge_top #(
         .stat_crc_err    (p_crc[gi]),
         .stat_fec_corr   (p_corr[gi]),
         .stat_fec_fail   (p_fail[gi]),
+        .stat_rs544_corr (p_rs_corr[gi]),
+        .stat_rs544_fail (p_rs_fail[gi]),
         .client_link_up  (p_client_up[gi]),
         .system_link_up  (p_system_up[gi]),
         .client_ls       (p_client_ls[gi]),
@@ -216,6 +222,7 @@ module fc128_bridge_top #(
       scrambler_en  <= 1'b0;
       sec_protect   <= 1'b0;
       xcode_en      <= 1'b0;
+      rs544_en      <= 1'b0;
       scratch       <= 32'h0;
       port_en       <= '0;
       credit_load   <= 1'b0;
@@ -232,6 +239,7 @@ module fc128_bridge_top #(
             scrambler_en <= csr_wdata[3];
             sec_protect  <= csr_wdata[4];
             xcode_en     <= csr_wdata[5];
+            rs544_en     <= csr_wdata[6];
           end
           12'h010: port_en <= csr_wdata[N_CLIENT-1:0];
           12'h014: scratch <= csr_wdata;
@@ -254,8 +262,8 @@ module fc128_bridge_top #(
     case (csr_addr)
       12'h000: rdata_mux = ID_WORD;
       12'h004: rdata_mux = VER_WORD;
-      12'h008: rdata_mux = {26'h0, xcode_en, sec_protect, scrambler_en, fec_en,
-                             sys_loopback, sw_reset};
+      12'h008: rdata_mux = {25'h0, rs544_en, xcode_en, sec_protect, scrambler_en,
+                             fec_en, sys_loopback, sw_reset};
       12'h00C: rdata_mux = {{(32-N_CLIENT){1'b0}}, p_lock};
       12'h010: rdata_mux = {{(32-N_CLIENT){1'b0}}, port_en};
       12'h014: rdata_mux = scratch;
@@ -274,6 +282,7 @@ module fc128_bridge_top #(
             3'd5: rdata_mux = {15'h0, p_lock[port_idx], p_cli[port_idx], p_sys[port_idx]};
             3'd6: rdata_mux = {16'h0, 2'b00, p_system_ls[port_idx], p_client_ls[port_idx],
                                6'h0, p_system_up[port_idx], p_client_up[port_idx]};
+            3'd7: rdata_mux = {p_rs_fail[port_idx], p_rs_corr[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

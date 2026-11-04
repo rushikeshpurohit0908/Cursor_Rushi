@@ -3,6 +3,7 @@ fc_async_fifo.sv
 fc_rx_front.sv
 fc_rs_fec.sv
 fc_rs544.sv
+fc_rs544_stream.sv
 fc_lane_pair.sv
 fc_link_sm.sv
 fc_xcode_stream.sv

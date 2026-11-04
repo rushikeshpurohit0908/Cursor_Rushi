@@ -5,8 +5,8 @@
 //
 // mem_rdata is combinational from mem_addr, same handshake as fc_rs_fec.
 // The frame pipe keeps that 8-bit engine: its buffer is 256 bytes and a full
-// codeword here is 544 ten-bit symbols. Twenty 257-bit transcoded blocks are
-// 514 symbols, which is the stitch onto fc_xcode_stream.
+// codeword here is 544 ten-bit symbols. fc_rs544_stream is the stitch:
+// twenty 257-bit transcoded blocks are the 514 message symbols.
 module fc_rs544 (
   input  logic        clk,
   input  logic        rst_n,

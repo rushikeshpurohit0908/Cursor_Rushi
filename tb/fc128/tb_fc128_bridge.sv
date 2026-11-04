@@ -379,6 +379,18 @@ module tb_fc128_bridge;
       $display("FAIL xcode csr %h", rdw);
       errors = errors + 1;
     end
+    csr_write_t(12'h008, 32'h0000_006A);
+    csr_read_t(12'h008, rdw);
+    if (rdw !== 32'h0000_006A) begin
+      $display("FAIL rs544 csr %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h11C, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL rs544 count %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h008, 32'h0000_002A);
     csr_write_t(12'h010, 32'h0000_00FF);
     mon_fec = 0;
     drive_en = 1;
