@@ -29,7 +29,12 @@
 // ModuleStateChangedFlag. It is set on entry to ModuleLowPwr, ModuleReady,
 // or ModuleFault, unless that state is left immediately, and a read clears
 // it. ModulePwrUp and ModulePwrDn do not set it. Byte 31 bit 0 masks it
-// out of IntL and powers up at 1. The slave does not stretch SCL. sda_oe
+// out of IntL and powers up at 1. Bytes 18-19 are Aux1 laser temperature,
+// signed 1/256 C. Bytes 20-21 are Aux2 TEC current, signed 100/32767 percent.
+// Byte 10 latches the eight high/low alarm and warning flags for those
+// monitors. A read clears a latch whose comparison is no longer true. A
+// negative TEC current does not set a high alarm. Byte 33 masks those flags
+// out of IntL and powers up at FFh. The slave does not stretch SCL. sda_oe
 // drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
@@ -48,6 +53,8 @@ module cmis_sfp_slave #(
   input  logic [15:0] opt_tx_u16,
   input  logic [15:0] bias_tx_u16,
   input  logic [15:0] opt_rx_u16,
+  input  logic [15:0] aux1_s16,
+  input  logic [15:0] aux2_s16,
   input  logic        tx_fail,
   input  logic        los_tx,
   input  logic        lol_tx,
@@ -93,6 +100,8 @@ module cmis_sfp_slave #(
   logic [11:0] alm_f, alm_clr;
   logic [7:0]  mon_f;
   logic        mon_clr;
+  logic [7:0]  aux_f;
+  logic        aux_clr;
   integer      alm_seen;
   logic       sw_hit;
   logic       sw_resetting;
@@ -140,7 +149,17 @@ module cmis_sfp_slave #(
     vcc_u16 > CMIS_VCC_HA, vcc_u16 < CMIS_VCC_LA,
     vcc_u16 > CMIS_VCC_HW, vcc_u16 < CMIS_VCC_LW
   };
+  wire signed [15:0] aux1_cmp = aux1_s16;
+  wire signed [15:0] aux2_cmp = aux2_s16;
+  // Byte 10: Aux1 HA, LA, HW, LW, then Aux2 HA, LA, HW, LW.
+  wire [7:0] aux_cond = {
+    aux1_cmp > CMIS_AUX1_HA, aux1_cmp < CMIS_AUX1_LA,
+    aux1_cmp > CMIS_AUX1_HW, aux1_cmp < CMIS_AUX1_LW,
+    aux2_cmp > CMIS_AUX2_HA, aux2_cmp < CMIS_AUX2_LA,
+    aux2_cmp > CMIS_AUX2_HW, aux2_cmp < CMIS_AUX2_LW
+  };
   wire mon_hot = |(mon_f & ~mem[CMIS_MSK_MON]);
+  wire aux_hot = |(aux_f & ~mem[CMIS_MSK_AUX]);
   wire [11:0] alm_msk = {
     p10[CMIS_MSK_RX_LW][0], p10[CMIS_MSK_RX_HW][0],
     p10[CMIS_MSK_RX_LA][0], p10[CMIS_MSK_RX_HA][0],
@@ -155,7 +174,7 @@ module cmis_sfp_slave #(
                   (los_rx_f & ~p10[CMIS_MSK_LOSRX][0]) |
                   (lol_rx_f & ~p10[CMIS_MSK_LOLRX][0]) |
                   |(alm_f & ~alm_msk);
-  wire int_deassert = !((flag_sc && !mem[CMIS_MSK_SC][0]) || lane_hot || mon_hot);
+  wire int_deassert = !((flag_sc && !mem[CMIS_MSK_SC][0]) || lane_hot || mon_hot || aux_hot);
   assign int_n = int_deassert;
 
   assign txdis_byte = p10[CMIS_TXDIS];
@@ -188,6 +207,8 @@ module cmis_sfp_slave #(
         flag_clr <= 1'b1;
       if (a == CMIS_MON_FLG)
         mon_clr <= 1'b1;
+      if (a == CMIS_AUX_FLG)
+        aux_clr <= 1'b1;
       if (mem[CMIS_PAGE] == CMIS_STAT_PAGE) begin
         if (a == CMIS_DPFLAG)
           dp_flag_clr <= 1'b1;
@@ -229,6 +250,14 @@ module cmis_sfp_slave #(
         CMIS_TH_V_LA:  thresh_word = CMIS_VCC_LA;
         CMIS_TH_V_HW:  thresh_word = CMIS_VCC_HW;
         CMIS_TH_V_LW:  thresh_word = CMIS_VCC_LW;
+        CMIS_TH_A1_HA: thresh_word = CMIS_AUX1_HA;
+        CMIS_TH_A1_LA: thresh_word = CMIS_AUX1_LA;
+        CMIS_TH_A1_HW: thresh_word = CMIS_AUX1_HW;
+        CMIS_TH_A1_LW: thresh_word = CMIS_AUX1_LW;
+        CMIS_TH_A2_HA: thresh_word = CMIS_AUX2_HA;
+        CMIS_TH_A2_LA: thresh_word = CMIS_AUX2_LA;
+        CMIS_TH_A2_HW: thresh_word = CMIS_AUX2_HW;
+        CMIS_TH_A2_LW: thresh_word = CMIS_AUX2_LW;
         CMIS_TH_TX_HA: thresh_word = CMIS_TX_HA;
         CMIS_TH_TX_LA: thresh_word = CMIS_TX_LA;
         CMIS_TH_TX_HW: thresh_word = CMIS_TX_HW;
@@ -276,6 +305,8 @@ module cmis_sfp_slave #(
         peek = {7'b0, flag_sc};
       else if (a == CMIS_MON_FLG)
         peek = mon_f;
+      else if (a == CMIS_AUX_FLG)
+        peek = aux_f;
       else if (a == 8'd14)
         peek = temp_s16[15:8];
       else if (a == 8'd15)
@@ -284,6 +315,14 @@ module cmis_sfp_slave #(
         peek = vcc_u16[15:8];
       else if (a == 8'd17)
         peek = vcc_u16[7:0];
+      else if (a == CMIS_AUX1_MON)
+        peek = aux1_s16[15:8];
+      else if (a == CMIS_AUX1_MON + 8'd1)
+        peek = aux1_s16[7:0];
+      else if (a == CMIS_AUX2_MON)
+        peek = aux2_s16[15:8];
+      else if (a == CMIS_AUX2_MON + 8'd1)
+        peek = aux2_s16[7:0];
       else if (a < 8'd128)
         peek = mem[a];
       else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE)
@@ -349,6 +388,7 @@ module cmis_sfp_slave #(
       mem[CMIS_CTL] <= 8'h40;
       mem[CMIS_MSK_SC] <= 8'hFF;
       mem[CMIS_MSK_MON] <= 8'hFF;
+      mem[CMIS_MSK_AUX] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE]     <= CMIS_H_128;
       mem[CMIS_APP_BASE + 1] <= CMIS_M_128;
@@ -385,6 +425,7 @@ module cmis_sfp_slave #(
       p10[CMIS_MSK_RX_LW] <= 8'hFF;
       alm_clr <= 12'h000;
       mon_clr <= 1'b0;
+      aux_clr <= 1'b0;
       alm_seen = -1;
       st <= S_IDLE;
       sh <= 8'h00;
@@ -417,6 +458,7 @@ module cmis_sfp_slave #(
       los_rx_clr <= 1'b0;
       lol_rx_clr <= 1'b0;
       mon_clr <= 1'b0;
+      aux_clr <= 1'b0;
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       if (!reset_n) begin
@@ -556,6 +598,7 @@ module cmis_sfp_slave #(
       lol_rx_f <= 1'b0;
       alm_f <= 12'h000;
       mon_f <= 8'h00;
+      aux_f <= 8'h00;
       sw_resetting <= 1'b0;
       held <= 1'b0;
       pwr_cnt <= 16'd0;
@@ -583,6 +626,7 @@ module cmis_sfp_slave #(
       lol_rx_f <= 1'b0;
       alm_f <= 12'h000;
       mon_f <= 8'h00;
+      aux_f <= 8'h00;
     end else begin
       raise_flag = 1'b0;
       if (sw_hit) begin
@@ -600,6 +644,7 @@ module cmis_sfp_slave #(
         lol_rx_f <= 1'b0;
         alm_f <= 12'h000;
         mon_f <= 8'h00;
+        aux_f <= 8'h00;
       end else if (sw_resetting) begin
         if (pwr_cnt == 16'd0) begin
           sw_resetting <= 1'b0;
@@ -776,6 +821,12 @@ module cmis_sfp_slave #(
             mon_f[ii] <= 1'b1;
           else if (mon_clr)
             mon_f[ii] <= 1'b0;
+        end
+        for (ii = 0; ii < 8; ii = ii + 1) begin
+          if (aux_cond[ii])
+            aux_f[ii] <= 1'b1;
+          else if (aux_clr)
+            aux_f[ii] <= 1'b0;
         end
       end
     end
