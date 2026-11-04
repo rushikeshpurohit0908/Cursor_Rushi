@@ -727,6 +727,16 @@ module tb_fc128_bridge;
       $display("FAIL cmis alarm mask %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h20C, rdw);
+    if (rdw[15:8] !== 8'h00) begin
+      $display("FAIL cmis module flags %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h310, rdw);
+    if (rdw !== 32'h0000_00FF) begin
+      $display("FAIL cmis module mask %h", rdw);
+      errors = errors + 1;
+    end
     cmis_opt_tx = 16'h5000;
     begin : cmis_alm
       integer k;
@@ -863,6 +873,49 @@ module tb_fc128_bridge;
         end
       end
       $display("FAIL cmis los clear %h", rdw);
+      errors = errors + 1;
+    end
+    cmis_temp = 16'h5000;
+    begin : cmis_temp_hi
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[15:8] == 8'hA0)
+          disable cmis_temp_hi;
+      end
+      $display("FAIL cmis temp alarm %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h310, 32'h0000_007F);
+    begin : cmis_temp_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[15:8] == 8'hA0) begin
+          csr_read_t(12'h204, rdw);
+          if (!rdw[19] && !rdw[24])
+            disable cmis_temp_int;
+        end
+      end
+      $display("FAIL cmis temp int %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h310, 32'h0000_00FF);
+    cmis_temp = 16'h2880;
+    begin : cmis_temp_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[15:8] == 8'h00) begin
+          csr_read_t(12'h204, rdw);
+          if (rdw[19] && rdw[24])
+            disable cmis_temp_clr;
+        end
+      end
+      $display("FAIL cmis temp clear %h", rdw);
       errors = errors + 1;
     end
     csr_write_t(12'h200, 32'h0000_3E23);

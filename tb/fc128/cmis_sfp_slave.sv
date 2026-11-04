@@ -22,7 +22,10 @@
 // one. A read clears a latch whose comparison is no longer true. Page 10h
 // bytes 218-225 and 228-231 mask those flags out of IntL. Temperature is
 // signed 1/256 C at bytes 14-15. Supply is
-// unsigned 100 uV at bytes 16-17. The slave does not stretch SCL. sda_oe
+// unsigned 100 uV at bytes 16-17. Byte 9 latches the module temperature
+// and supply alarm/warning flags against the page 02h thresholds. A read
+// clears a latch whose comparison is no longer true. Byte 32 masks those
+// flags out of IntL and powers up at FFh. The slave does not stretch SCL. sda_oe
 // drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
@@ -84,6 +87,8 @@ module cmis_sfp_slave #(
   logic       fail_clr, los_tx_clr, lol_tx_clr, los_rx_clr, lol_rx_clr;
   logic       fail_f, los_tx_f, lol_tx_f, los_rx_f, lol_rx_f;
   logic [11:0] alm_f, alm_clr;
+  logic [7:0]  mon_f;
+  logic        mon_clr;
   integer      alm_seen;
   logic       sw_hit;
   logic       sw_resetting;
@@ -123,6 +128,15 @@ module cmis_sfp_slave #(
     opt_tx_u16 < CMIS_TX_LW, opt_tx_u16 > CMIS_TX_HW,
     opt_tx_u16 < CMIS_TX_LA, opt_tx_u16 > CMIS_TX_HA
   };
+  wire signed [15:0] temp_cmp = temp_s16;
+  // Byte 9: Temp HA, LA, HW, LW, then Vcc HA, LA, HW, LW.
+  wire [7:0] mon_cond = {
+    temp_cmp > CMIS_TEMP_HA, temp_cmp < CMIS_TEMP_LA,
+    temp_cmp > CMIS_TEMP_HW, temp_cmp < CMIS_TEMP_LW,
+    vcc_u16 > CMIS_VCC_HA, vcc_u16 < CMIS_VCC_LA,
+    vcc_u16 > CMIS_VCC_HW, vcc_u16 < CMIS_VCC_LW
+  };
+  wire mon_hot = |(mon_f & ~mem[CMIS_MSK_MON]);
   wire [11:0] alm_msk = {
     p10[CMIS_MSK_RX_LW][0], p10[CMIS_MSK_RX_HW][0],
     p10[CMIS_MSK_RX_LA][0], p10[CMIS_MSK_RX_HA][0],
@@ -137,7 +151,7 @@ module cmis_sfp_slave #(
                   (los_rx_f & ~p10[CMIS_MSK_LOSRX][0]) |
                   (lol_rx_f & ~p10[CMIS_MSK_LOLRX][0]) |
                   |(alm_f & ~alm_msk);
-  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_hot);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_hot || mon_hot);
   assign int_n = int_deassert;
 
   assign txdis_byte = p10[CMIS_TXDIS];
@@ -168,6 +182,8 @@ module cmis_sfp_slave #(
     begin
       if (a == 8'd8)
         flag_clr <= 1'b1;
+      if (a == CMIS_MON_FLG)
+        mon_clr <= 1'b1;
       if (mem[CMIS_PAGE] == CMIS_STAT_PAGE) begin
         if (a == CMIS_DPFLAG)
           dp_flag_clr <= 1'b1;
@@ -201,6 +217,14 @@ module cmis_sfp_slave #(
   function automatic [15:0] thresh_word(input [7:0] a);
     begin
       case (a)
+        CMIS_TH_T_HA:  thresh_word = CMIS_TEMP_HA;
+        CMIS_TH_T_LA:  thresh_word = CMIS_TEMP_LA;
+        CMIS_TH_T_HW:  thresh_word = CMIS_TEMP_HW;
+        CMIS_TH_T_LW:  thresh_word = CMIS_TEMP_LW;
+        CMIS_TH_V_HA:  thresh_word = CMIS_VCC_HA;
+        CMIS_TH_V_LA:  thresh_word = CMIS_VCC_LA;
+        CMIS_TH_V_HW:  thresh_word = CMIS_VCC_HW;
+        CMIS_TH_V_LW:  thresh_word = CMIS_VCC_LW;
         CMIS_TH_TX_HA: thresh_word = CMIS_TX_HA;
         CMIS_TH_TX_LA: thresh_word = CMIS_TX_LA;
         CMIS_TH_TX_HW: thresh_word = CMIS_TX_HW;
@@ -246,6 +270,8 @@ module cmis_sfp_slave #(
         peek = {4'b0, (force_fault ? CMIS_ST_FLT : (sw_resetting ? CMIS_ST_LOW : mod_state_q)), int_deassert};
       else if (a == 8'd8)
         peek = {7'b0, flag_sc};
+      else if (a == CMIS_MON_FLG)
+        peek = mon_f;
       else if (a == 8'd14)
         peek = temp_s16[15:8];
       else if (a == 8'd15)
@@ -279,7 +305,7 @@ module cmis_sfp_slave #(
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && alm_bit(a) != 4'hF) begin
         ab = alm_bit(a);
         peek = {7'h0, alm_f[ab]};
-      end else if (mem[CMIS_PAGE] == CMIS_TH_PAGE && a >= CMIS_TH_TX_HA &&
+      end       else if (mem[CMIS_PAGE] == CMIS_TH_PAGE && a >= CMIS_TH_T_HA &&
                    a <= CMIS_TH_RX_LW + 8'd1) begin
         tw = a[0] ? thresh_word(a - 8'd1) : thresh_word(a);
         peek = a[0] ? tw[7:0] : tw[15:8];
@@ -318,6 +344,7 @@ module cmis_sfp_slave #(
       mem[2] <= 8'h00;
       mem[CMIS_CTL] <= 8'h40;
       mem[31] <= 8'hFF;
+      mem[CMIS_MSK_MON] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE]     <= CMIS_H_128;
       mem[CMIS_APP_BASE + 1] <= CMIS_M_128;
@@ -353,6 +380,7 @@ module cmis_sfp_slave #(
       p10[CMIS_MSK_RX_HW] <= 8'hFF;
       p10[CMIS_MSK_RX_LW] <= 8'hFF;
       alm_clr <= 12'h000;
+      mon_clr <= 1'b0;
       alm_seen = -1;
       st <= S_IDLE;
       sh <= 8'h00;
@@ -384,6 +412,7 @@ module cmis_sfp_slave #(
       lol_tx_clr <= 1'b0;
       los_rx_clr <= 1'b0;
       lol_rx_clr <= 1'b0;
+      mon_clr <= 1'b0;
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       if (!reset_n) begin
@@ -522,6 +551,7 @@ module cmis_sfp_slave #(
       los_rx_f <= 1'b0;
       lol_rx_f <= 1'b0;
       alm_f <= 12'h000;
+      mon_f <= 8'h00;
       sw_resetting <= 1'b0;
       held <= 1'b0;
       pwr_cnt <= 16'd0;
@@ -548,6 +578,7 @@ module cmis_sfp_slave #(
       los_rx_f <= 1'b0;
       lol_rx_f <= 1'b0;
       alm_f <= 12'h000;
+      mon_f <= 8'h00;
     end else begin
       raise_flag = 1'b0;
       if (sw_hit) begin
@@ -564,6 +595,7 @@ module cmis_sfp_slave #(
         los_rx_f <= 1'b0;
         lol_rx_f <= 1'b0;
         alm_f <= 12'h000;
+        mon_f <= 8'h00;
       end else if (sw_resetting) begin
         if (pwr_cnt == 16'd0) begin
           sw_resetting <= 1'b0;
@@ -729,6 +761,12 @@ module cmis_sfp_slave #(
             alm_f[ii] <= 1'b1;
           else if (alm_clr[ii])
             alm_f[ii] <= 1'b0;
+        end
+        for (ii = 0; ii < 8; ii = ii + 1) begin
+          if (mon_cond[ii])
+            mon_f[ii] <= 1'b1;
+          else if (mon_clr)
+            mon_f[ii] <= 1'b0;
         end
       end
     end
