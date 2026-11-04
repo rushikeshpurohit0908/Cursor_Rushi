@@ -8,6 +8,7 @@ fc_lane_pair.sv
 fc_link_sm.sv
 fc_xcode_stream.sv
 fc_pipe.sv
+fc_rate.sv
 fc_port.sv
 fc_i2c_master.sv
 fc_cmis_host.sv

@@ -48,7 +48,23 @@ compile_run tb_fc_cmis \
   tb/fc128/cmis_sfp_slave.sv \
   tb/fc128/tb_fc_cmis.sv
 
+compile_run tb_fc_rate \
+  rtl/fc128/fc_rate.sv \
+  rtl/fc128/fc_scrambler.sv \
+  rtl/fc128/fc_async_fifo.sv \
+  rtl/fc128/fc_rx_front.sv \
+  rtl/fc128/fc_rs_fec.sv \
+  rtl/fc128/fc_rs544.sv \
+  rtl/fc128/fc_rs544_stream.sv \
+  rtl/fc128/fc_lane_pair.sv \
+  rtl/fc128/fc_link_sm.sv \
+  rtl/fc128/fc_xcode_stream.sv \
+  rtl/fc128/fc_pipe.sv \
+  rtl/fc128/fc_port.sv \
+  tb/fc128/tb_fc_rate.sv
+
 compile_run tb_fc_rs544_port \
+  rtl/fc128/fc_rate.sv \
   rtl/fc128/fc_scrambler.sv \
   rtl/fc128/fc_async_fifo.sv \
   rtl/fc128/fc_rx_front.sv \
@@ -63,6 +79,7 @@ compile_run tb_fc_rs544_port \
   tb/fc128/tb_fc_rs544_port.sv
 
 compile_run tb_fc128_bridge \
+  rtl/fc128/fc_rate.sv \
   rtl/fc128/fc_scrambler.sv \
   rtl/fc128/fc_async_fifo.sv \
   rtl/fc128/fc_rx_front.sv \
