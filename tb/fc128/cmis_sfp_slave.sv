@@ -34,8 +34,13 @@
 // Byte 10 latches the eight high/low alarm and warning flags for those
 // monitors. A read clears a latch whose comparison is no longer true. A
 // negative TEC current does not set a high alarm. Byte 33 masks those flags
-// out of IntL and powers up at FFh. The slave does not stretch SCL. sda_oe
-// drives a zero on the open-drain pad.
+// out of IntL and powers up at FFh. Bytes 22-23 are Aux3 additional supply
+// Vcc2, signed 100 uV. Bytes 24-25 are Custom laser frequency error, signed
+// 1 MHz. Byte 11 latches the eight high/low alarm and warning flags for
+// those monitors. A read clears a latch whose comparison is no longer true.
+// A negative Vcc2 or frequency error does not set a high alarm. Byte 34
+// masks those flags out of IntL and powers up at FFh. The slave does not
+// stretch SCL. sda_oe drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
   parameter [7:0] TXDIS_INIT = 8'hA0
@@ -55,6 +60,8 @@ module cmis_sfp_slave #(
   input  logic [15:0] opt_rx_u16,
   input  logic [15:0] aux1_s16,
   input  logic [15:0] aux2_s16,
+  input  logic [15:0] aux3_s16,
+  input  logic [15:0] cust_s16,
   input  logic        tx_fail,
   input  logic        los_tx,
   input  logic        lol_tx,
@@ -102,6 +109,8 @@ module cmis_sfp_slave #(
   logic        mon_clr;
   logic [7:0]  aux_f;
   logic        aux_clr;
+  logic [7:0]  a3_f;
+  logic        a3_clr;
   integer      alm_seen;
   logic       sw_hit;
   logic       sw_resetting;
@@ -158,8 +167,18 @@ module cmis_sfp_slave #(
     aux2_cmp > CMIS_AUX2_HA, aux2_cmp < CMIS_AUX2_LA,
     aux2_cmp > CMIS_AUX2_HW, aux2_cmp < CMIS_AUX2_LW
   };
+  wire signed [15:0] aux3_cmp = aux3_s16;
+  wire signed [15:0] cust_cmp = cust_s16;
+  // Byte 11: Aux3 HA, LA, HW, LW, then Custom HA, LA, HW, LW.
+  wire [7:0] a3_cond = {
+    aux3_cmp > CMIS_AUX3_HA, aux3_cmp < CMIS_AUX3_LA,
+    aux3_cmp > CMIS_AUX3_HW, aux3_cmp < CMIS_AUX3_LW,
+    cust_cmp > CMIS_CUST_HA, cust_cmp < CMIS_CUST_LA,
+    cust_cmp > CMIS_CUST_HW, cust_cmp < CMIS_CUST_LW
+  };
   wire mon_hot = |(mon_f & ~mem[CMIS_MSK_MON]);
   wire aux_hot = |(aux_f & ~mem[CMIS_MSK_AUX]);
+  wire a3_hot = |(a3_f & ~mem[CMIS_MSK_A3]);
   wire [11:0] alm_msk = {
     p10[CMIS_MSK_RX_LW][0], p10[CMIS_MSK_RX_HW][0],
     p10[CMIS_MSK_RX_LA][0], p10[CMIS_MSK_RX_HA][0],
@@ -174,7 +193,7 @@ module cmis_sfp_slave #(
                   (los_rx_f & ~p10[CMIS_MSK_LOSRX][0]) |
                   (lol_rx_f & ~p10[CMIS_MSK_LOLRX][0]) |
                   |(alm_f & ~alm_msk);
-  wire int_deassert = !((flag_sc && !mem[CMIS_MSK_SC][0]) || lane_hot || mon_hot || aux_hot);
+  wire int_deassert = !((flag_sc && !mem[CMIS_MSK_SC][0]) || lane_hot || mon_hot || aux_hot || a3_hot);
   assign int_n = int_deassert;
 
   assign txdis_byte = p10[CMIS_TXDIS];
@@ -209,6 +228,8 @@ module cmis_sfp_slave #(
         mon_clr <= 1'b1;
       if (a == CMIS_AUX_FLG)
         aux_clr <= 1'b1;
+      if (a == CMIS_A3_FLG)
+        a3_clr <= 1'b1;
       if (mem[CMIS_PAGE] == CMIS_STAT_PAGE) begin
         if (a == CMIS_DPFLAG)
           dp_flag_clr <= 1'b1;
@@ -258,6 +279,14 @@ module cmis_sfp_slave #(
         CMIS_TH_A2_LA: thresh_word = CMIS_AUX2_LA;
         CMIS_TH_A2_HW: thresh_word = CMIS_AUX2_HW;
         CMIS_TH_A2_LW: thresh_word = CMIS_AUX2_LW;
+        CMIS_TH_A3_HA: thresh_word = CMIS_AUX3_HA;
+        CMIS_TH_A3_LA: thresh_word = CMIS_AUX3_LA;
+        CMIS_TH_A3_HW: thresh_word = CMIS_AUX3_HW;
+        CMIS_TH_A3_LW: thresh_word = CMIS_AUX3_LW;
+        CMIS_TH_CU_HA: thresh_word = CMIS_CUST_HA;
+        CMIS_TH_CU_LA: thresh_word = CMIS_CUST_LA;
+        CMIS_TH_CU_HW: thresh_word = CMIS_CUST_HW;
+        CMIS_TH_CU_LW: thresh_word = CMIS_CUST_LW;
         CMIS_TH_TX_HA: thresh_word = CMIS_TX_HA;
         CMIS_TH_TX_LA: thresh_word = CMIS_TX_LA;
         CMIS_TH_TX_HW: thresh_word = CMIS_TX_HW;
@@ -307,6 +336,8 @@ module cmis_sfp_slave #(
         peek = mon_f;
       else if (a == CMIS_AUX_FLG)
         peek = aux_f;
+      else if (a == CMIS_A3_FLG)
+        peek = a3_f;
       else if (a == 8'd14)
         peek = temp_s16[15:8];
       else if (a == 8'd15)
@@ -323,6 +354,14 @@ module cmis_sfp_slave #(
         peek = aux2_s16[15:8];
       else if (a == CMIS_AUX2_MON + 8'd1)
         peek = aux2_s16[7:0];
+      else if (a == CMIS_AUX3_MON)
+        peek = aux3_s16[15:8];
+      else if (a == CMIS_AUX3_MON + 8'd1)
+        peek = aux3_s16[7:0];
+      else if (a == CMIS_CUST_MON)
+        peek = cust_s16[15:8];
+      else if (a == CMIS_CUST_MON + 8'd1)
+        peek = cust_s16[7:0];
       else if (a < 8'd128)
         peek = mem[a];
       else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE)
@@ -389,6 +428,7 @@ module cmis_sfp_slave #(
       mem[CMIS_MSK_SC] <= 8'hFF;
       mem[CMIS_MSK_MON] <= 8'hFF;
       mem[CMIS_MSK_AUX] <= 8'hFF;
+      mem[CMIS_MSK_A3] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE]     <= CMIS_H_128;
       mem[CMIS_APP_BASE + 1] <= CMIS_M_128;
@@ -426,6 +466,7 @@ module cmis_sfp_slave #(
       alm_clr <= 12'h000;
       mon_clr <= 1'b0;
       aux_clr <= 1'b0;
+      a3_clr <= 1'b0;
       alm_seen = -1;
       st <= S_IDLE;
       sh <= 8'h00;
@@ -459,6 +500,7 @@ module cmis_sfp_slave #(
       lol_rx_clr <= 1'b0;
       mon_clr <= 1'b0;
       aux_clr <= 1'b0;
+      a3_clr <= 1'b0;
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       if (!reset_n) begin
@@ -599,6 +641,7 @@ module cmis_sfp_slave #(
       alm_f <= 12'h000;
       mon_f <= 8'h00;
       aux_f <= 8'h00;
+      a3_f <= 8'h00;
       sw_resetting <= 1'b0;
       held <= 1'b0;
       pwr_cnt <= 16'd0;
@@ -627,6 +670,7 @@ module cmis_sfp_slave #(
       alm_f <= 12'h000;
       mon_f <= 8'h00;
       aux_f <= 8'h00;
+      a3_f <= 8'h00;
     end else begin
       raise_flag = 1'b0;
       if (sw_hit) begin
@@ -645,6 +689,7 @@ module cmis_sfp_slave #(
         alm_f <= 12'h000;
         mon_f <= 8'h00;
         aux_f <= 8'h00;
+      a3_f <= 8'h00;
       end else if (sw_resetting) begin
         if (pwr_cnt == 16'd0) begin
           sw_resetting <= 1'b0;
@@ -827,6 +872,12 @@ module cmis_sfp_slave #(
             aux_f[ii] <= 1'b1;
           else if (aux_clr)
             aux_f[ii] <= 1'b0;
+        end
+        for (ii = 0; ii < 8; ii = ii + 1) begin
+          if (a3_cond[ii])
+            a3_f[ii] <= 1'b1;
+          else if (a3_clr)
+            a3_f[ii] <= 1'b0;
         end
       end
     end

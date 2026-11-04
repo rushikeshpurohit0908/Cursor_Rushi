@@ -26,6 +26,7 @@ module tb_fc_cmis;
   logic [7:0] mask_mon = 8'hFF;
   logic mask_sc = 1;
   logic [7:0] mask_aux = 8'hFF;
+  logic [7:0] mask_a3 = 8'hFF;
   logic tx_fail = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -42,6 +43,8 @@ module tb_fc_cmis;
   logic [15:0] opt_rx_u16 = 16'h1388;
   logic [15:0] aux1_s16 = 16'd12800;
   logic [15:0] aux2_s16 = 16'd3277;
+  logic [15:0] aux3_s16 = 16'd18000;
+  logic [15:0] cust_s16 = 16'd250;
 
   logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb;
   logic dp_deinit_rb, dp_act, dp_pend, out_rx, out_tx, dp_flag_h, dp_valid;
@@ -53,7 +56,7 @@ module tb_fc_cmis;
   logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
   logic [11:0] flag_alm;
   logic [15:0] temp_rb, vcc_rb, opt_tx_rb, bias_rb, opt_rx_rb;
-  logic [15:0] aux1_rb, aux2_rb;
+  logic [15:0] aux1_rb, aux2_rb, aux3_rb, cust_rb;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
   wire sda_i = ~(sda_oe | sda_slave);
@@ -71,6 +74,7 @@ module tb_fc_cmis;
     .mask_mon(mask_mon),
     .mask_sc(mask_sc),
     .mask_aux(mask_aux),
+    .mask_a3(mask_a3),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -89,6 +93,7 @@ module tb_fc_cmis;
     .temp_s16(temp_rb), .vcc_u16(vcc_rb),
     .opt_tx_u16(opt_tx_rb), .bias_tx_u16(bias_rb), .opt_rx_u16(opt_rx_rb),
     .aux1_s16(aux1_rb), .aux2_s16(aux2_rb),
+    .aux3_s16(aux3_rb), .cust_s16(cust_rb),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -99,6 +104,7 @@ module tb_fc_cmis;
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
     .opt_tx_u16(opt_tx_u16), .bias_tx_u16(bias_tx_u16), .opt_rx_u16(opt_rx_u16),
     .aux1_s16(aux1_s16), .aux2_s16(aux2_s16),
+    .aux3_s16(aux3_s16), .cust_s16(cust_s16),
     .tx_fail(tx_fail), .los_tx(los_tx), .lol_tx(lol_tx),
     .los_rx(los_rx), .lol_rx(lol_rx), .int_n(int_n),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
@@ -1099,6 +1105,165 @@ module tb_fc_cmis;
       end
       $display("FAIL aux restore flags %h aux %h %h mask %h",
                flag2, aux1_rb, aux2_rb, mod.mem[CMIS_MSK_AUX]);
+      errors = errors + 1;
+    end
+
+    // Aux3 is Vcc2 (signed 100 uV) and Custom is laser frequency error
+    // (signed 1 MHz). Byte 11 is clear-on-read. A negative reading must
+    // not set a high alarm. Byte 34 is the whole-byte mask.
+    begin : a3_quiet
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h00 && aux3_rb == 16'd18000 &&
+            cust_rb == 16'd250 && int_deasserted && int_n &&
+            mod.mem[CMIS_MSK_A3] == 8'hFF)
+          disable a3_quiet;
+      end
+      $display("FAIL aux3 quiet flags %h aux %h %h mask %h",
+               flag3, aux3_rb, cust_rb, mod.mem[CMIS_MSK_A3]);
+      errors = errors + 1;
+    end
+    aux3_s16 = CMIS_AUX3_HA + 16'sd1;
+    begin : a3_vhi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'hA0 && aux3_rb == aux3_s16 &&
+            int_deasserted && int_n)
+          disable a3_vhi;
+      end
+      $display("FAIL aux3 vcc high %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    aux3_s16 = CMIS_AUX3_HA;
+    begin : a3_veq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h20 && aux3_rb == CMIS_AUX3_HA)
+          disable a3_veq;
+      end
+      $display("FAIL aux3 vcc equal %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    aux3_s16 = CMIS_AUX3_LA - 16'sd1;
+    begin : a3_vlo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h50 && aux3_rb == aux3_s16)
+          disable a3_vlo;
+      end
+      $display("FAIL aux3 vcc low %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    aux3_s16 = CMIS_AUX3_LA;
+    begin : a3_vlw
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h10 && aux3_rb == CMIS_AUX3_LA)
+          disable a3_vlw;
+      end
+      $display("FAIL aux3 vcc warning %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    aux3_s16 = -16'sd100;
+    begin : a3_vneg
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h50 && aux3_rb == aux3_s16 && !flag3[7])
+          disable a3_vneg;
+      end
+      $display("FAIL aux3 vcc negative %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    aux3_s16 = 16'd18000;
+    begin : a3_vclr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h00 && aux3_rb == 16'd18000)
+          disable a3_vclr;
+      end
+      $display("FAIL aux3 vcc clear %h aux %h", flag3, aux3_rb);
+      errors = errors + 1;
+    end
+    cust_s16 = CMIS_CUST_HA + 16'sd1;
+    begin : a3_fhi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h0A && cust_rb == cust_s16)
+          disable a3_fhi;
+      end
+      $display("FAIL aux3 freq high %h aux %h", flag3, cust_rb);
+      errors = errors + 1;
+    end
+    cust_s16 = CMIS_CUST_HA;
+    begin : a3_feq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h02 && cust_rb == CMIS_CUST_HA)
+          disable a3_feq;
+      end
+      $display("FAIL aux3 freq equal %h aux %h", flag3, cust_rb);
+      errors = errors + 1;
+    end
+    cust_s16 = -16'sd250;
+    begin : a3_fneg
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h00 && cust_rb == cust_s16)
+          disable a3_fneg;
+      end
+      $display("FAIL aux3 freq negative %h aux %h", flag3, cust_rb);
+      errors = errors + 1;
+    end
+    cust_s16 = CMIS_CUST_LA - 16'sd1;
+    begin : a3_flo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h05 && cust_rb == cust_s16 &&
+            int_deasserted && int_n)
+          disable a3_flo;
+      end
+      $display("FAIL aux3 freq low %h aux %h int %b", flag3, cust_rb, int_n);
+      errors = errors + 1;
+    end
+    mask_a3 = 8'hFE;
+    begin : a3_int
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h05 && mod.mem[CMIS_MSK_A3] == 8'hFE &&
+            !int_deasserted && !int_n)
+          disable a3_int;
+      end
+      $display("FAIL aux3 int %h mask %h int %b pin %b",
+               flag3, mod.mem[CMIS_MSK_A3], int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    mask_a3 = 8'hFF;
+    cust_s16 = 16'd250;
+    begin : a3_done
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag3 == 8'h00 && flag2 == 8'h00 &&
+            aux3_rb == 16'd18000 && cust_rb == 16'd250 &&
+            mod.mem[CMIS_MSK_A3] == 8'hFF && mod.mem[CMIS_MSK_AUX] == 8'hFF &&
+            mod.mem[CMIS_MSK_MON] == 8'hFF && mod.mem[CMIS_MSK_SC] == 8'hFF &&
+            int_deasserted && int_n)
+          disable a3_done;
+      end
+      $display("FAIL aux3 restore flags %h aux %h %h mask %h",
+               flag3, aux3_rb, cust_rb, mod.mem[CMIS_MSK_A3]);
       errors = errors + 1;
     end
 
