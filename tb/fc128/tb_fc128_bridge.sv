@@ -411,6 +411,35 @@ module tb_fc128_bridge;
       $display("FAIL scratch %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h218, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL rate default %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h218, 32'h0000_0002);
+    csr_read_t(12'h218, rdw);
+    if (rdw !== 32'h0000_0002) begin
+      $display("FAIL rate 32 %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h238, 32'h0000_0001);
+    csr_read_t(12'h238, rdw);
+    if (rdw !== 32'h0000_0001) begin
+      $display("FAIL rate port1 %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h218, rdw);
+    if (rdw !== 32'h0000_0002) begin
+      $display("FAIL rate port0 clobber %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h218, 32'h0000_0003);
+    csr_read_t(12'h218, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL rate reserved %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h238, 32'h0);
 
     // System lanes carry 256b/257b. The client port stays a 66-bit block.
     csr_write_t(12'h008, 32'h0000_002A);
