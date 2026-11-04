@@ -39,10 +39,16 @@ module tb_fc128_bridge;
 
   assign cmis_scl_i[0] = ~cmis_scl_oe[0];
   assign cmis_sda_i[0] = ~(cmis_sda_oe[0] | cmis_sda_s);
+  logic sfp_int_n;
+  logic sfp_fail_tx = 0;
+  logic sfp_los_tx = 0;
+  logic sfp_lol_tx = 0;
+  logic sfp_los_rx = 0;
+  logic sfp_lol_rx = 0;
   assign cmis_scl_i[7:1] = 7'h7F;
   assign cmis_sda_i[7:1] = 7'h7F;
   assign cmis_modprs_n = 8'hFE;
-  assign cmis_int_n = 8'hFF;
+  assign cmis_int_n = {7'h7F, sfp_int_n};
 
   fc128_bridge_top dut (
     .clk_client(clk_client), .clk_system(clk_system),
@@ -67,7 +73,10 @@ module tb_fc128_bridge;
   cmis_sfp_slave #(.PWR_DLY(20), .TXDIS_INIT(8'hA0)) u_sfp (
     .clk(clk_client), .rst_n(rst_client_n),
     .scl_i(cmis_scl_i[0]), .sda_i(cmis_sda_i[0]), .sda_oe(cmis_sda_s),
+    .int_n(sfp_int_n),
     .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
+    .fail_tx(sfp_fail_tx), .los_tx(sfp_los_tx), .lol_tx(sfp_lol_tx),
+    .los_rx(sfp_los_rx), .lol_rx(sfp_lol_rx),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
     .mod_state(), .txdis_byte(), .flag_state()
   );
@@ -423,7 +432,7 @@ module tb_fc128_bridge;
       errors = errors + 1;
     end
     csr_read_t(12'h200, rdw);
-    if (rdw !== 32'h0000_0020) begin
+    if (rdw !== 32'h0000_3E20) begin
       $display("FAIL cmis ctrl %h", rdw);
       errors = errors + 1;
     end
@@ -776,6 +785,54 @@ module tb_fc128_bridge;
           disable cmis_sqoff;
       end
       $display("FAIL cmis squelch clear %h", rdw);
+      errors = errors + 1;
+    end
+    // The 0x21 write cleared the masks, so LOSFlagRx pulls IntL down.
+    sfp_los_rx = 1;
+    begin : cmis_los
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[14] && !sfp_int_n) begin
+          csr_read_t(12'h204, rdw);
+          if (!rdw[24] && !rdw[19])
+            disable cmis_los;
+        end
+      end
+      $display("FAIL cmis los %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    sfp_los_rx = 0;
+    csr_write_t(12'h200, 32'h0000_3E21);
+    sfp_fail_tx = 1;
+    begin : cmis_fail_masked
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h200, rdw);
+        if (rdw[13:9] == 5'h1F) begin
+          csr_read_t(12'h214, rdw);
+          if (rdw[11] && !rdw[14] && sfp_int_n) begin
+            csr_read_t(12'h204, rdw);
+            if (rdw[24] && rdw[19])
+              disable cmis_fail_masked;
+          end
+        end
+      end
+      $display("FAIL cmis masked failure %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    sfp_fail_tx = 0;
+    begin : cmis_fail_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (!rdw[11] && sfp_int_n)
+          disable cmis_fail_clr;
+      end
+      $display("FAIL cmis failure clear %h", rdw);
       errors = errors + 1;
     end
     csr_write_t(12'h200, 32'h0000_0023);

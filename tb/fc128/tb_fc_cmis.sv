@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 // CMIS 5.0 host against a behavioral SFP112: power-up, low power, software
 // reset, lane-1 OutputDisableTx, OutputSquelchForceTx, staged AppSel,
-// the data-path state machine, module fault, and an absent module.
+// the data-path state machine, lane flags and IntL, module fault, and an
+// absent module.
 module tb_fc_cmis;
   `include "fc_cmis.vh"
 
@@ -17,6 +18,12 @@ module tb_fc_cmis;
   logic [7:0] staged = 8'h10;
   logic dp_deinit = 0;
   logic apply_pulse = 0;
+  logic [4:0] lane_mask = 5'h1F;
+  logic fail_tx = 0;
+  logic los_tx = 0;
+  logic lol_tx = 0;
+  logic los_rx = 0;
+  logic lol_rx = 0;
   logic mod_prs_n = 0;
   logic lpmode = 0;
   logic reset_n = 1;
@@ -33,6 +40,8 @@ module tb_fc_cmis;
   logic rx_rb, tx_rb, dp_changed, dp_pending, lane_valid;
   logic [3:0] cfg_h, cfg_s;
   logic [7:0] active_h, active_s, squelch_byte, ignored;
+  logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
+  logic int_n;
   logic rx_mod, tx_mod, pend_s;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
@@ -44,6 +53,7 @@ module tb_fc_cmis;
     .sw_reset_pulse(sw_pulse), .tx_disable(tx_disable),
     .tx_squelch(tx_squelch), .dp_deinit(dp_deinit),
     .staged_appsel(staged), .apply_pulse(apply_pulse),
+    .flag_mask(lane_mask),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -57,6 +67,9 @@ module tb_fc_cmis;
     .dp_changed(dp_changed), .dp_pending(dp_pending),
     .lane_valid(lane_valid),
     .config_status(cfg_h), .active_appsel(active_h),
+    .flag_fail_tx(flag_fail), .flag_los_tx(flag_los_tx),
+    .flag_lol_tx(flag_lol_tx), .flag_los_rx(flag_los_rx),
+    .flag_lol_rx(flag_lol_rx),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -64,8 +77,10 @@ module tb_fc_cmis;
     .PWR_DLY(20000), .DP_DLY(8), .TXDIS_INIT(8'hA0), .DPDE_INIT(8'hC0)
   ) mod (
     .clk(clk), .rst_n(rst_n),
-    .scl_i(scl_i), .sda_i(sda_i), .sda_oe(sda_slave),
+    .scl_i(scl_i), .sda_i(sda_i), .sda_oe(sda_slave), .int_n(int_n),
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
+    .fail_tx(fail_tx), .los_tx(los_tx), .lol_tx(lol_tx),
+    .los_rx(los_rx), .lol_rx(lol_rx),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .dpde_byte(dpde_byte),
     .dp_state(dp_mod), .rx_status(rx_mod), .tx_status(tx_mod),
@@ -208,7 +223,16 @@ module tb_fc_cmis;
       errors = errors + 1;
     end
     // DPDeinit defaults clear, so ModuleReady commissions the lane.
-    if (dp_rb !== CMIS_DP_ACT || !rx_rb || !tx_rb || !lane_valid || !dp_changed) begin
+    // The lane image is the previous status pass, so wait until that pass
+    // shows DPActivated rather than the sample taken while the module was
+    // still powering up.
+    begin : dp_bring
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (dp_rb == CMIS_DP_ACT && rx_rb && tx_rb && lane_valid && dp_changed && !busy)
+          disable dp_bring;
+      end
       $display("FAIL dp bring-up %h rx %b tx %b valid %b flag %b",
                dp_rb, rx_rb, tx_rb, lane_valid, dp_changed);
       errors = errors + 1;
@@ -326,6 +350,83 @@ module tb_fc_cmis;
           disable sq_off;
       end
       $display("FAIL squelch off st %h byte %h tx %b", dp_rb, squelch_byte, tx_rb);
+      errors = errors + 1;
+    end
+
+    // Masks power up set, so a held LOS is visible and IntL stays high.
+    // Dropping the input leaves the flag until the next status read.
+    los_rx = 1;
+    begin : los_masked
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_los_rx && int_n && int_deasserted &&
+            mod.p10[CMIS_MLOSRX] == 8'hFF && !flag_fail && !busy)
+          disable los_masked;
+      end
+      $display("FAIL masked LOS flag %b int %b deassert %b mask %h",
+               flag_los_rx, int_n, int_deasserted, mod.p10[CMIS_MLOSRX]);
+      errors = errors + 1;
+    end
+    los_rx = 0;
+    begin : los_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (!flag_los_rx && int_n && !busy)
+          disable los_clr;
+      end
+      $display("FAIL LOS flag did not clear %b", flag_los_rx);
+      errors = errors + 1;
+    end
+    // A one-shot pulse is held until that same read.
+    los_rx = 1;
+    repeat (30) @(posedge clk);
+    los_rx = 0;
+    begin : los_pulse
+      integer k;
+      reg saw;
+      saw = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_los_rx)
+          saw = 1;
+        if (saw && !flag_los_rx && !los_rx && !busy)
+          disable los_pulse;
+      end
+      $display("FAIL LOS pulse saw %b flag %b", saw, flag_los_rx);
+      errors = errors + 1;
+    end
+    // Unmask LOSFlagRx only. Bit 0 follows the CSR; bits [7:1] stay 1.
+    lane_mask[3] = 0;
+    los_rx = 1;
+    begin : los_open
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_los_rx && !int_n && !int_deasserted &&
+            mod.p10[CMIS_MLOSRX] == 8'hFE &&
+            mod.p10[CMIS_MFAILTX] == 8'hFF && mod.p10[CMIS_MLOLRX] == 8'hFF &&
+            !busy)
+          disable los_open;
+      end
+      $display("FAIL unmasked LOS flag %b int %b byte3 %b mask %h %h",
+               flag_los_rx, int_n, int_deasserted,
+               mod.p10[CMIS_MLOSRX], mod.p10[CMIS_MFAILTX]);
+      errors = errors + 1;
+    end
+    los_rx = 0;
+    lane_mask = 5'h1F;
+    begin : los_done
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (!flag_los_rx && int_n && int_deasserted &&
+            mod.p10[CMIS_MLOSRX] == 8'hFF && !busy)
+          disable los_done;
+      end
+      $display("FAIL LOS restore flag %b int %b mask %h",
+               flag_los_rx, int_n, mod.p10[CMIS_MLOSRX]);
       errors = errors + 1;
     end
 
