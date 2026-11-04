@@ -11,7 +11,16 @@
 // FailureFlagTx, LOSFlagTx, CDRLOLFlagTx, LOSFlagRx, and CDRLOLFlagRx.
 // A flag stays set while its input is set and holds a pulse until that
 // byte is read. Page 10h bytes 214, 215, 216, 226, and 227 bit 0 mask
-// those flags. int_n is low while any unmasked flag is set. One data
+// those flags. int_n is low while any unmasked flag is set. Bytes
+// 154-155, 170-171, and 186-187 report lane-1 OpticalPowerTx,
+// LaserBiasTx, and OpticalPowerRx. Power counts 0.1 uW and bias counts
+// 2 uA. The MSB is the lower address. A read leaves them unchanged.
+// Bytes 139-146 and 149-152 latch the Tx-power, laser-bias, and Rx-power
+// high-alarm, low-alarm, high-warning, and low-warning flags. A high flag
+// is the monitor greater than the fixed threshold. A low flag is the
+// monitor less than it. The flag stays set while the comparison is true
+// and holds a pulse until that byte is read. Page 10h bytes 218-225 and
+// 228-231 bit 0 mask those flags and power up at FFh. One data
 // path, lane 1, follows Figure 6-5 with
 // SteppedConfigOnly = 0. ModuleReady and DPDeinit clear run the path up.
 // A successful ApplyDPInit copies the staged byte, sets DPInitPending, and
@@ -41,6 +50,9 @@ module cmis_sfp_slave #(
   input  logic        lol_rx,
   input  logic [15:0] temp_s16,
   input  logic [15:0] vcc_u16,
+  input  logic [15:0] opt_tx_u16,
+  input  logic [15:0] bias_tx_u16,
+  input  logic [15:0] opt_rx_u16,
   output logic [2:0]  mod_state,
   output logic [7:0]  txdis_byte,
   output logic [7:0]  dpde_byte,
@@ -79,7 +91,9 @@ module cmis_sfp_slave #(
   logic       apply_hit;
   logic       dp_flag_clr;
   logic [4:0] lane_clr;
+  logic [11:0] opt_clr;
   logic       f_fail_tx, f_los_tx, f_lol_tx, f_los_rx, f_lol_rx;
+  logic [11:0] f_opt;
   logic       sw_resetting;
   logic       held;
   logic       raise_flag;
@@ -112,7 +126,19 @@ module cmis_sfp_slave #(
                   (f_lol_tx  && !p10[CMIS_MLOLTX][0])  ||
                   (f_los_rx  && !p10[CMIS_MLOSRX][0])  ||
                   (f_lol_rx  && !p10[CMIS_MLOLRX][0]);
-  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int);
+  wire opt_int = (f_opt[0]  && !p10[CMIS_M_TXHA][0]) ||
+                 (f_opt[1]  && !p10[CMIS_M_TXLA][0]) ||
+                 (f_opt[2]  && !p10[CMIS_M_TXHW][0]) ||
+                 (f_opt[3]  && !p10[CMIS_M_TXLW][0]) ||
+                 (f_opt[4]  && !p10[CMIS_M_BIHA][0]) ||
+                 (f_opt[5]  && !p10[CMIS_M_BILA][0]) ||
+                 (f_opt[6]  && !p10[CMIS_M_BIHW][0]) ||
+                 (f_opt[7]  && !p10[CMIS_M_BILW][0]) ||
+                 (f_opt[8]  && !p10[CMIS_M_RXHA][0]) ||
+                 (f_opt[9]  && !p10[CMIS_M_RXLA][0]) ||
+                 (f_opt[10] && !p10[CMIS_M_RXHW][0]) ||
+                 (f_opt[11] && !p10[CMIS_M_RXLW][0]);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int || opt_int);
   assign int_n = int_deassert;
 
   function automatic [4:0] lane_clr_of(input [7:0] a, input [7:0] page);
@@ -132,6 +158,35 @@ module cmis_sfp_slave #(
       end
     end
   endfunction
+
+  function automatic [11:0] opt_clr_of(input [7:0] a, input [7:0] page);
+    begin
+      opt_clr_of = 12'h000;
+      if (page == CMIS_STAT_PAGE) begin
+        if (a == CMIS_F_TXHA) opt_clr_of[0] = 1'b1;
+        else if (a == CMIS_F_TXLA) opt_clr_of[1] = 1'b1;
+        else if (a == CMIS_F_TXHW) opt_clr_of[2] = 1'b1;
+        else if (a == CMIS_F_TXLW) opt_clr_of[3] = 1'b1;
+        else if (a == CMIS_F_BIHA) opt_clr_of[4] = 1'b1;
+        else if (a == CMIS_F_BILA) opt_clr_of[5] = 1'b1;
+        else if (a == CMIS_F_BIHW) opt_clr_of[6] = 1'b1;
+        else if (a == CMIS_F_BILW) opt_clr_of[7] = 1'b1;
+        else if (a == CMIS_F_RXHA) opt_clr_of[8] = 1'b1;
+        else if (a == CMIS_F_RXLA) opt_clr_of[9] = 1'b1;
+        else if (a == CMIS_F_RXHW) opt_clr_of[10] = 1'b1;
+        else if (a == CMIS_F_RXLW) opt_clr_of[11] = 1'b1;
+      end
+    end
+  endfunction
+
+  wire [11:0] opt_lvl = {
+    opt_rx_u16 < CMIS_RX_LW, opt_rx_u16 > CMIS_RX_HW,
+    opt_rx_u16 < CMIS_RX_LA, opt_rx_u16 > CMIS_RX_HA,
+    bias_tx_u16 < CMIS_BI_LW, bias_tx_u16 > CMIS_BI_HW,
+    bias_tx_u16 < CMIS_BI_LA, bias_tx_u16 > CMIS_BI_HA,
+    opt_tx_u16 < CMIS_TX_LW, opt_tx_u16 > CMIS_TX_HW,
+    opt_tx_u16 < CMIS_TX_LA, opt_tx_u16 > CMIS_TX_HA
+  };
   wire module_ready = reset_n && !sw_resetting && !force_fault &&
                       (mod_state_q == CMIS_ST_RDY);
   // Eq. 6-6 and 6-12. OutputDisableTx and OutputSquelchForceTx both hold
@@ -201,6 +256,42 @@ module cmis_sfp_slave #(
           peek = {7'h0, f_los_rx};
         else if (a == CMIS_FLOLRX)
           peek = {7'h0, f_lol_rx};
+        else if (a == CMIS_F_TXHA)
+          peek = {7'h0, f_opt[0]};
+        else if (a == CMIS_F_TXLA)
+          peek = {7'h0, f_opt[1]};
+        else if (a == CMIS_F_TXHW)
+          peek = {7'h0, f_opt[2]};
+        else if (a == CMIS_F_TXLW)
+          peek = {7'h0, f_opt[3]};
+        else if (a == CMIS_F_BIHA)
+          peek = {7'h0, f_opt[4]};
+        else if (a == CMIS_F_BILA)
+          peek = {7'h0, f_opt[5]};
+        else if (a == CMIS_F_BIHW)
+          peek = {7'h0, f_opt[6]};
+        else if (a == CMIS_F_BILW)
+          peek = {7'h0, f_opt[7]};
+        else if (a == CMIS_F_RXHA)
+          peek = {7'h0, f_opt[8]};
+        else if (a == CMIS_F_RXLA)
+          peek = {7'h0, f_opt[9]};
+        else if (a == CMIS_F_RXHW)
+          peek = {7'h0, f_opt[10]};
+        else if (a == CMIS_F_RXLW)
+          peek = {7'h0, f_opt[11]};
+        else if (a == CMIS_OPT_TX)
+          peek = opt_tx_u16[15:8];
+        else if (a == CMIS_OPT_TX + 8'd1)
+          peek = opt_tx_u16[7:0];
+        else if (a == CMIS_BIAS_TX)
+          peek = bias_tx_u16[15:8];
+        else if (a == CMIS_BIAS_TX + 8'd1)
+          peek = bias_tx_u16[7:0];
+        else if (a == CMIS_OPT_RX)
+          peek = opt_rx_u16[15:8];
+        else if (a == CMIS_OPT_RX + 8'd1)
+          peek = opt_rx_u16[7:0];
         else if (a == CMIS_DPPEND)
           peek = {7'h0, dp_pending};
         else if (a == CMIS_CFGSTAT)
@@ -247,6 +338,18 @@ module cmis_sfp_slave #(
       p10[CMIS_MLOLTX] <= 8'hFF;
       p10[CMIS_MLOSRX] <= 8'hFF;
       p10[CMIS_MLOLRX] <= 8'hFF;
+      p10[CMIS_M_TXHA] <= 8'hFF;
+      p10[CMIS_M_TXLA] <= 8'hFF;
+      p10[CMIS_M_TXHW] <= 8'hFF;
+      p10[CMIS_M_TXLW] <= 8'hFF;
+      p10[CMIS_M_BIHA] <= 8'hFF;
+      p10[CMIS_M_BILA] <= 8'hFF;
+      p10[CMIS_M_BIHW] <= 8'hFF;
+      p10[CMIS_M_BILW] <= 8'hFF;
+      p10[CMIS_M_RXHA] <= 8'hFF;
+      p10[CMIS_M_RXLA] <= 8'hFF;
+      p10[CMIS_M_RXHW] <= 8'hFF;
+      p10[CMIS_M_RXLW] <= 8'hFF;
       st <= S_IDLE;
       sh <= 8'h00;
       bits <= 4'd0;
@@ -262,6 +365,7 @@ module cmis_sfp_slave #(
       apply_hit <= 1'b0;
       dp_flag_clr <= 1'b0;
       lane_clr <= 5'h00;
+      opt_clr <= 12'h000;
     end else begin
       scl_q <= scl_i;
       sda_q <= sda_i;
@@ -270,6 +374,7 @@ module cmis_sfp_slave #(
       apply_hit <= 1'b0;
       dp_flag_clr <= 1'b0;
       lane_clr <= 5'h00;
+      opt_clr <= 12'h000;
       if (!reset_n) begin
         st <= S_IDLE;
         sda_oe <= 1'b0;
@@ -339,6 +444,7 @@ module cmis_sfp_slave #(
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
+                opt_clr <= opt_clr_of(ptr, mem[CMIS_PAGE]);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -375,6 +481,7 @@ module cmis_sfp_slave #(
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
+                opt_clr <= opt_clr_of(ptr, mem[CMIS_PAGE]);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -623,6 +730,19 @@ module cmis_sfp_slave #(
       f_lol_tx  <= lol_tx  || (f_lol_tx  && !lane_clr[2]);
       f_los_rx  <= los_rx  || (f_los_rx  && !lane_clr[3]);
       f_lol_rx  <= lol_rx  || (f_lol_rx  && !lane_clr[4]);
+    end
+  end
+
+  // Level comparisons hold the flag. A pulse stays latched until the host
+  // reads that page 11h byte. The clear and a still-true comparison
+  // overlap, so the flag does not drop for one poll.
+  integer oi;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      f_opt <= 12'h000;
+    end else begin
+      for (oi = 0; oi < 12; oi = oi + 1)
+        f_opt[oi] <= opt_lvl[oi] || (f_opt[oi] && !opt_clr[oi]);
     end
   end
 endmodule
