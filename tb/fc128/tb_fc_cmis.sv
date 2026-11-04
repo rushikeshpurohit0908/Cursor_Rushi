@@ -25,6 +25,7 @@ module tb_fc_cmis;
   logic [11:0] mask_alm = 12'hFFF;
   logic [7:0] mask_mon = 8'hFF;
   logic mask_sc = 1;
+  logic [7:0] mask_aux = 8'hFF;
   logic tx_fail = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -39,6 +40,8 @@ module tb_fc_cmis;
   logic [15:0] opt_tx_u16 = 16'h2710;
   logic [15:0] bias_tx_u16 = 16'h4E20;
   logic [15:0] opt_rx_u16 = 16'h1388;
+  logic [15:0] aux1_s16 = 16'd12800;
+  logic [15:0] aux2_s16 = 16'd3277;
 
   logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb;
   logic dp_deinit_rb, dp_act, dp_pend, out_rx, out_tx, dp_flag_h, dp_valid;
@@ -50,6 +53,7 @@ module tb_fc_cmis;
   logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
   logic [11:0] flag_alm;
   logic [15:0] temp_rb, vcc_rb, opt_tx_rb, bias_rb, opt_rx_rb;
+  logic [15:0] aux1_rb, aux2_rb;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
   wire sda_i = ~(sda_oe | sda_slave);
@@ -66,6 +70,7 @@ module tb_fc_cmis;
     .mask_alm(mask_alm),
     .mask_mon(mask_mon),
     .mask_sc(mask_sc),
+    .mask_aux(mask_aux),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -83,6 +88,7 @@ module tb_fc_cmis;
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
     .temp_s16(temp_rb), .vcc_u16(vcc_rb),
     .opt_tx_u16(opt_tx_rb), .bias_tx_u16(bias_rb), .opt_rx_u16(opt_rx_rb),
+    .aux1_s16(aux1_rb), .aux2_s16(aux2_rb),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -92,6 +98,7 @@ module tb_fc_cmis;
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
     .opt_tx_u16(opt_tx_u16), .bias_tx_u16(bias_tx_u16), .opt_rx_u16(opt_rx_u16),
+    .aux1_s16(aux1_s16), .aux2_s16(aux2_s16),
     .tx_fail(tx_fail), .los_tx(los_tx), .lol_tx(lol_tx),
     .los_rx(los_rx), .lol_rx(lol_rx), .int_n(int_n),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
@@ -945,6 +952,153 @@ module tb_fc_cmis;
       end
       $display("FAIL state restore %h mask %h state %0d",
                flag0, mod.mem[CMIS_MSK_SC], mod_state);
+      errors = errors + 1;
+    end
+
+    // Aux1 is laser temperature (signed 1/256 C) and Aux2 is TEC current
+    // (signed 100/32767 percent). Byte 10 is clear-on-read. A negative TEC
+    // reading must not set a high alarm. Byte 33 is the whole-byte mask.
+    begin : aux_quiet
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h00 && aux1_rb == 16'd12800 &&
+            aux2_rb == 16'd3277 && int_deasserted && int_n &&
+            mod.mem[CMIS_MSK_AUX] == 8'hFF)
+          disable aux_quiet;
+      end
+      $display("FAIL aux quiet flags %h aux %h %h mask %h",
+               flag2, aux1_rb, aux2_rb, mod.mem[CMIS_MSK_AUX]);
+      errors = errors + 1;
+    end
+    aux1_s16 = CMIS_AUX1_HA + 16'sd1;
+    begin : aux_thi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'hA0 && aux1_rb == aux1_s16 &&
+            int_deasserted && int_n)
+          disable aux_thi;
+      end
+      $display("FAIL aux temp high %h aux %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux1_s16 = CMIS_AUX1_HA;
+    begin : aux_teq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h20 && aux1_rb == CMIS_AUX1_HA)
+          disable aux_teq;
+      end
+      $display("FAIL aux temp equal %h aux %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux1_s16 = CMIS_AUX1_LA - 16'sd1;
+    begin : aux_tlo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h50 && aux1_rb == aux1_s16)
+          disable aux_tlo;
+      end
+      $display("FAIL aux temp low %h aux %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux1_s16 = CMIS_AUX1_LA;
+    begin : aux_tlw
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h10 && aux1_rb == CMIS_AUX1_LA)
+          disable aux_tlw;
+      end
+      $display("FAIL aux temp warning %h aux %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux1_s16 = 16'd12800;
+    begin : aux_tclr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h00 && aux1_rb == 16'd12800)
+          disable aux_tclr;
+      end
+      $display("FAIL aux temp clear %h aux %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = CMIS_AUX2_HA + 16'sd1;
+    begin : aux_chi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h0A && aux2_rb == aux2_s16)
+          disable aux_chi;
+      end
+      $display("FAIL aux tec high %h aux %h", flag2, aux2_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = CMIS_AUX2_HA;
+    begin : aux_ceq
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h02 && aux2_rb == CMIS_AUX2_HA)
+          disable aux_ceq;
+      end
+      $display("FAIL aux tec equal %h aux %h", flag2, aux2_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = -16'sd3277;
+    begin : aux_cneg
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h00 && aux2_rb == aux2_s16)
+          disable aux_cneg;
+      end
+      $display("FAIL aux tec negative %h aux %h", flag2, aux2_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = CMIS_AUX2_LA - 16'sd1;
+    begin : aux_clo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h05 && aux2_rb == aux2_s16 &&
+            int_deasserted && int_n)
+          disable aux_clo;
+      end
+      $display("FAIL aux tec low %h aux %h int %b", flag2, aux2_rb, int_n);
+      errors = errors + 1;
+    end
+    mask_aux = 8'hFE;
+    begin : aux_int
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h05 && mod.mem[CMIS_MSK_AUX] == 8'hFE &&
+            !int_deasserted && !int_n)
+          disable aux_int;
+      end
+      $display("FAIL aux int %h mask %h int %b pin %b",
+               flag2, mod.mem[CMIS_MSK_AUX], int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    mask_aux = 8'hFF;
+    aux2_s16 = 16'd3277;
+    begin : aux_done
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag2 == 8'h00 && aux1_rb == 16'd12800 &&
+            aux2_rb == 16'd3277 && mod.mem[CMIS_MSK_AUX] == 8'hFF &&
+            mod.mem[CMIS_MSK_MON] == 8'hFF && mod.mem[CMIS_MSK_SC] == 8'hFF &&
+            int_deasserted && int_n)
+          disable aux_done;
+      end
+      $display("FAIL aux restore flags %h aux %h %h mask %h",
+               flag2, aux1_rb, aux2_rb, mod.mem[CMIS_MSK_AUX]);
       errors = errors + 1;
     end
 

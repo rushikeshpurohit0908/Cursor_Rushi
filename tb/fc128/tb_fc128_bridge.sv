@@ -39,6 +39,8 @@ module tb_fc128_bridge;
   logic [15:0] cmis_opt_tx = 16'h2710;
   logic [15:0] cmis_bias = 16'h4E20;
   logic [15:0] cmis_opt_rx = 16'h1388;
+  logic [15:0] cmis_aux1 = 16'd12800;
+  logic [15:0] cmis_aux2 = 16'd3277;
 
   assign cmis_scl_i[0] = ~cmis_scl_oe[0];
   assign cmis_sda_i[0] = ~(cmis_sda_oe[0] | cmis_sda_s);
@@ -79,6 +81,7 @@ module tb_fc128_bridge;
     .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
     .opt_tx_u16(cmis_opt_tx), .bias_tx_u16(cmis_bias), .opt_rx_u16(cmis_opt_rx),
+    .aux1_s16(cmis_aux1), .aux2_s16(cmis_aux2),
     .tx_fail(sfp_tx_fail), .los_tx(sfp_los_tx), .lol_tx(sfp_lol_tx),
     .los_rx(sfp_los_rx), .lol_rx(sfp_lol_rx), .int_n(sfp_int_n),
     .mod_state(), .txdis_byte(), .flag_state(),
@@ -974,6 +977,90 @@ module tb_fc128_bridge;
         end
       end
       $display("FAIL cmis state mask restore %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h318, rdw);
+    if (rdw !== 32'h0000_00FF) begin
+      $display("FAIL cmis aux mask %h", rdw);
+      errors = errors + 1;
+    end
+    begin : cmis_aux_nom
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h31C, rdw);
+        if (rdw == {16'd3277, 16'd12800}) begin
+          csr_read_t(12'h20C, rdw);
+          if (rdw[23:16] == 8'h00)
+            disable cmis_aux_nom;
+        end
+      end
+      $display("FAIL cmis aux nominal %h", rdw);
+      errors = errors + 1;
+    end
+    cmis_aux1 = 16'd18176;
+    begin : cmis_aux_hi
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[23:16] == 8'hA0) begin
+          csr_read_t(12'h31C, rdw);
+          if (rdw[15:0] == 16'd18176)
+            disable cmis_aux_hi;
+        end
+      end
+      $display("FAIL cmis aux high %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h318, 32'h0000_007F);
+    begin : cmis_aux_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[23:16] == 8'hA0) begin
+          csr_read_t(12'h204, rdw);
+          if (!rdw[19] && !rdw[24])
+            disable cmis_aux_int;
+        end
+      end
+      $display("FAIL cmis aux int %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h318, 32'h0000_00FF);
+    cmis_aux1 = 16'd12800;
+    cmis_aux2 = -16'sd3277;
+    begin : cmis_aux_neg
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[23:16] == 8'h00) begin
+          csr_read_t(12'h31C, rdw);
+          if (rdw == {-16'sd3277, 16'd12800}) begin
+            csr_read_t(12'h204, rdw);
+            if (rdw[19] && rdw[24])
+              disable cmis_aux_neg;
+          end
+        end
+      end
+      $display("FAIL cmis aux negative %h", rdw);
+      errors = errors + 1;
+    end
+    cmis_aux2 = 16'd3277;
+    begin : cmis_aux_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h31C, rdw);
+        if (rdw == {16'd3277, 16'd12800}) begin
+          csr_read_t(12'h318, rdw);
+          if (rdw == 32'h0000_00FF)
+            disable cmis_aux_clr;
+        end
+      end
+      $display("FAIL cmis aux restore %h", rdw);
       errors = errors + 1;
     end
 

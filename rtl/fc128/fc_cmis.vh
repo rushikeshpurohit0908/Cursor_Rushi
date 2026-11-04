@@ -43,6 +43,15 @@
 // set just because the module remains in the new state. Byte 31 bit 0 is
 // ModuleStateChangedMask (Table 8-11). Bits [7:1] of that byte are left as
 // the module set them.
+// Lower bytes 18-19 and 20-21 are Aux1Mon and Aux2Mon. Aux1 is laser
+// temperature, signed 1/256 C. Aux2 is TEC current, signed, in units of
+// 100/32767 percent. Byte 10 is the eight clear-on-read flags: Aux1 high
+// alarm, low alarm, high warning, low warning, then the same four for Aux2.
+// A high flag is the monitor greater than the page 02h threshold (bytes
+// 144-159) and a low flag is the monitor less than it. Equality is not a
+// flag. A negative TEC current must not set a high alarm. Byte 33 is the
+// matching mask, the whole byte. A read of byte 10 clears a latch whose
+// comparison is no longer true. Bytes 18-21 are not clear-on-read.
 // Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
@@ -75,8 +84,12 @@ localparam [7:0] CMIS_ALM_TX   = 8'd139;
 localparam [7:0] CMIS_ALM_RX   = 8'd149;
 localparam [7:0] CMIS_MOD_FLG  = 8'd8;
 localparam [7:0] CMIS_MON_FLG  = 8'd9;
+localparam [7:0] CMIS_AUX_FLG  = 8'd10;
+localparam [7:0] CMIS_AUX1_MON = 8'd18;
+localparam [7:0] CMIS_AUX2_MON = 8'd20;
 localparam [7:0] CMIS_MSK_SC   = 8'd31;
 localparam [7:0] CMIS_MSK_MON  = 8'd32;
+localparam [7:0] CMIS_MSK_AUX  = 8'd33;
 localparam [7:0] CMIS_LOSRX    = 8'd147;
 localparam [7:0] CMIS_LOLRX    = 8'd148;
 localparam [7:0] CMIS_OPT_TX   = 8'd154;
@@ -107,6 +120,14 @@ localparam [7:0] CMIS_TH_V_HA  = 8'd136;
 localparam [7:0] CMIS_TH_V_LA  = 8'd138;
 localparam [7:0] CMIS_TH_V_HW  = 8'd140;
 localparam [7:0] CMIS_TH_V_LW  = 8'd142;
+localparam [7:0] CMIS_TH_A1_HA = 8'd144;
+localparam [7:0] CMIS_TH_A1_LA = 8'd146;
+localparam [7:0] CMIS_TH_A1_HW = 8'd148;
+localparam [7:0] CMIS_TH_A1_LW = 8'd150;
+localparam [7:0] CMIS_TH_A2_HA = 8'd152;
+localparam [7:0] CMIS_TH_A2_LA = 8'd154;
+localparam [7:0] CMIS_TH_A2_HW = 8'd156;
+localparam [7:0] CMIS_TH_A2_LW = 8'd158;
 localparam signed [15:0] CMIS_TEMP_HA = 16'sh4B00;
 localparam signed [15:0] CMIS_TEMP_LA = -16'sd1280;
 localparam signed [15:0] CMIS_TEMP_HW = 16'sh4600;
@@ -115,6 +136,17 @@ localparam [15:0] CMIS_VCC_HA  = 16'h8CA0;
 localparam [15:0] CMIS_VCC_LA  = 16'h7530;
 localparam [15:0] CMIS_VCC_HW  = 16'h875A;
 localparam [15:0] CMIS_VCC_LW  = 16'h7A76;
+// Aux1 laser temperature, signed 1/256 C: 70 C / 20 C / 65 C / 25 C.
+// Aux2 TEC current, signed 100/32767 percent: +80% / -80% / +60% / -60%.
+// Nominal samples 50 C (12800) and about +10% (3277) sit inside both windows.
+localparam signed [15:0] CMIS_AUX1_HA = 16'sd17920;
+localparam signed [15:0] CMIS_AUX1_LA = 16'sd5120;
+localparam signed [15:0] CMIS_AUX1_HW = 16'sd16640;
+localparam signed [15:0] CMIS_AUX1_LW = 16'sd6400;
+localparam signed [15:0] CMIS_AUX2_HA = 16'sd26214;
+localparam signed [15:0] CMIS_AUX2_LA = -16'sd26214;
+localparam signed [15:0] CMIS_AUX2_HW = 16'sd19660;
+localparam signed [15:0] CMIS_AUX2_LW = -16'sd19660;
 localparam [15:0] CMIS_TX_HA   = 16'h4000;
 localparam [15:0] CMIS_TX_LA   = 16'h0008;
 localparam [15:0] CMIS_TX_HW   = 16'h3000;

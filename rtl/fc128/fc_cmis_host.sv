@@ -33,6 +33,12 @@
 //     bit 0 is ModuleStateChangedMask. The host read-modify-writes that bit
 //     from mask_sc and leaves bits [7:1] as the module set them. Byte 8 bit 0,
 //     captured with the same lower-memory poll, is ModuleStateChangedFlag.
+//     Lower byte 33 is the Aux1/Aux2 mask. The host writes that whole byte
+//     from mask_aux after the byte 32 mask and before the status pass.
+//     Byte 10, captured with the lower-memory poll, is the eight Aux flags.
+//   * after the page 11h Rx-power flags, read lower bytes 18-21. Those are
+//     Aux1Mon and Aux2Mon. The bytes 128-134 read is left as it is, and the
+//     lower-memory poll stays bytes 0-17.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -61,6 +67,7 @@ module fc_cmis_host #(
   input  logic [11:0] mask_alm,
   input  logic [7:0]  mask_mon,
   input  logic        mask_sc,
+  input  logic [7:0]  mask_aux,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -99,6 +106,8 @@ module fc_cmis_host #(
   output logic [15:0] opt_tx_u16,
   output logic [15:0] bias_tx_u16,
   output logic [15:0] opt_rx_u16,
+  output logic [15:0] aux1_s16,
+  output logic [15:0] aux2_s16,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -144,6 +153,9 @@ module fc_cmis_host #(
   localparam [5:0] OP_MM_WR  = 6'd33;
   localparam [5:0] OP_SC_RD  = 6'd34;
   localparam [5:0] OP_SC_WR  = 6'd35;
+  localparam [5:0] OP_AX_RD  = 6'd36;
+  localparam [5:0] OP_AX_WR  = 6'd37;
+  localparam [5:0] OP_AUX    = 6'd38;
   localparam [4:0] MK_LAST   = 5'd16;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
@@ -155,9 +167,10 @@ module fc_cmis_host #(
   logic [5:0]  op;
   logic        launch, inflight, wait_gap;
   logic        ctrl_ok, tx_ok, sq_ok, dp_ok, as_ok, st_fresh, sw_pend, ap_pend;
-  logic        mk_ok, mm_ok, sc_ok;
+  logic        mk_ok, mm_ok, sc_ok, ax_ok;
   logic [7:0]  mm_rb, mm_snap;
   logic        sc_rb, sc_snap;
+  logic [7:0]  ax_rb, ax_snap;
   logic [7:0]  as_rb;
   logic [4:0]  mk_i;
   logic [16:0] mk_snap;
@@ -259,6 +272,9 @@ module fc_cmis_host #(
       sc_ok     <= 1'b0;
       sc_rb     <= 1'b1;
       sc_snap   <= 1'b1;
+      ax_ok     <= 1'b0;
+      ax_rb     <= 8'hFF;
+      ax_snap   <= 8'hFF;
       mk_i      <= 5'd0;
       mk_snap   <= 17'h1FFFF;
       mk_fail_rb   <= 1'b1;
@@ -305,6 +321,8 @@ module fc_cmis_host #(
       opt_tx_u16  <= 16'h0000;
       bias_tx_u16 <= 16'h0000;
       opt_rx_u16  <= 16'h0000;
+      aux1_s16    <= 16'h0000;
+      aux2_s16    <= 16'h0000;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -332,6 +350,7 @@ module fc_cmis_host #(
           mk_ok    <= 1'b0;
           mm_ok    <= 1'b0;
           sc_ok    <= 1'b0;
+          ax_ok    <= 1'b0;
           st_fresh <= 1'b0;
           dp_state <= CMIS_DP_DEACT;
           dp_activated <= 1'b0;
@@ -351,6 +370,8 @@ module fc_cmis_host #(
           opt_tx_u16    <= 16'h0000;
           bias_tx_u16   <= 16'h0000;
           opt_rx_u16    <= 16'h0000;
+          aux1_s16      <= 16'h0000;
+          aux2_s16      <= 16'h0000;
           wait_gap <= 1'b1;
           gapcnt   <= GAPW[15:0];
         end else begin
@@ -575,8 +596,17 @@ module fc_cmis_host #(
             end
             OP_AL_RX: begin
               flag_alm[11:8] <= {cap[3][0], cap[2][0], cap[1][0], cap[0][0]};
-              dp_valid   <= 1'b1;
-              st_fresh   <= 1'b1;
+              op        <= OP_AUX;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_AUX1_MON;
+              cmd_rlen  <= 6'd4;
+              launch    <= 1'b1;
+            end
+            OP_AUX: begin
+              aux1_s16 <= {cap[0], cap[1]};
+              aux2_s16 <= {cap[2], cap[3]};
+              dp_valid <= 1'b1;
+              st_fresh <= 1'b1;
             end
             OP_MM_RD: begin
               if (cap[0] == mm_snap) begin
@@ -611,6 +641,23 @@ module fc_cmis_host #(
             OP_SC_WR: begin
               sc_rb <= sc_snap;
               sc_ok <= 1'b1;
+            end
+            OP_AX_RD: begin
+              if (cap[0] == ax_snap) begin
+                ax_rb <= ax_snap;
+                ax_ok <= 1'b1;
+              end else begin
+                op        <= OP_AX_WR;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_MSK_AUX;
+                cmd_wdata <= ax_snap;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_AX_WR: begin
+              ax_rb <= ax_snap;
+              ax_ok <= 1'b1;
             end
             OP_MK_PG: begin
               mk_i      <= 5'd0;
@@ -684,6 +731,7 @@ module fc_cmis_host #(
             mk_ok   <= 1'b0;
             mm_ok   <= 1'b0;
             sc_ok   <= 1'b0;
+            ax_ok   <= 1'b0;
             st_fresh <= 1'b0;
             dp_state <= CMIS_DP_DEACT;
             dp_activated <= 1'b0;
@@ -703,6 +751,8 @@ module fc_cmis_host #(
             opt_tx_u16    <= 16'h0000;
             bias_tx_u16   <= 16'h0000;
             opt_rx_u16    <= 16'h0000;
+            aux1_s16      <= 16'h0000;
+            aux2_s16      <= 16'h0000;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -772,6 +822,13 @@ module fc_cmis_host #(
           op        <= OP_SC_RD;
           cmd_write <= 1'b0;
           cmd_addr  <= CMIS_MSK_SC;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!ax_ok || mask_aux != ax_rb) begin
+          ax_snap   <= mask_aux;
+          op        <= OP_AX_RD;
+          cmd_write <= 1'b0;
+          cmd_addr  <= CMIS_MSK_AUX;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else if (!st_fresh) begin
