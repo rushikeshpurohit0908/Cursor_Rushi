@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // Self-checking bring-up of the 8-port FC128 bridge:
-// scramble, block lock, CRC frames, system loopback, credit stall,
-// RS-FEC correction, the second client port, and the protect-lane copy.
+// scramble, block lock, link init, CRC frames, system loopback, credit stall,
+// RS-FEC correction, the second client port, NOS drop, and the protect-lane copy.
 module tb_fc128_bridge;
   `include "fc128_defs.vh"
   `include "fc_crc.vh"
@@ -246,6 +246,39 @@ module tb_fc128_bridge;
     end
   endtask
 
+  task automatic wait_links(input [7:0] want, input integer limit);
+    integer t;
+    reg [31:0] cli_l, sys_l, exp_ls;
+    begin
+      t = 0;
+      cli_l = 32'h0;
+      sys_l = 32'h0;
+      while (t < limit && (cli_l[7:0] != want || sys_l[7:0] != want)) begin
+        csr_read_t(12'h01C, cli_l);
+        csr_read_t(12'h020, sys_l);
+        t = t + 1;
+      end
+      if (cli_l[7:0] != want || sys_l[7:0] != want) begin
+        $display("FAIL link up client %h system %h", cli_l, sys_l);
+        csr_read_t(12'h118, rdw);
+        $display("FAIL port0 link word %h", rdw);
+        errors = errors + 1;
+      end else if (want == 8'hFF) begin
+        csr_read_t(12'h028, rdw);
+        if (rdw[7:0] != 8'hFF) begin
+          $display("FAIL system block lock %h", rdw);
+          errors = errors + 1;
+        end
+        exp_ls = {16'h0, 2'b00, FC_LS_ACT, FC_LS_ACT, 6'h0, 1'b1, 1'b1};
+        csr_read_t(12'h118, rdw);
+        if (rdw !== exp_ls) begin
+          $display("FAIL port0 link state %h exp %h", rdw, exp_ls);
+          errors = errors + 1;
+        end
+      end
+    end
+  endtask
+
   task automatic wait_cap(input integer port, input integer prev, input integer limit);
     integer t;
     begin
@@ -322,6 +355,7 @@ module tb_fc128_bridge;
       $display("FAIL block lock %h", rdw);
       errors = errors + 1;
     end
+    wait_links(8'hFF, 4000);
 
     prev = cap_count;
     for (bi = 0; bi < 16; bi = bi + 1) pay[bi] = bi[7:0];
@@ -395,6 +429,25 @@ module tb_fc128_bridge;
     send_pay(7, 3, 0);
     wait_cap(7, prev, 4000);
     expect_bytes(3);
+
+    // NOS drops the client link. The frame that follows is discarded, and a
+    // later frame is delivered once Idle has brought the link back.
+    prev = cap_count;
+    push_blk(FC_SYNC_CTRL, {56'h0, FC_NOS});
+    push_blk(FC_SYNC_CTRL, {56'h0, FC_NOS});
+    for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'hD0 + bi[7:0];
+    send_pay(0, 4, 0);
+    repeat (1500) @(posedge clk_client);
+    if (cap_count != prev) begin
+      $display("FAIL frame accepted while client link down");
+      errors = errors + 1;
+    end
+    wait_links(8'hFF, 4000);
+    prev = cap_count;
+    for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'hD0 + bi[7:0];
+    send_pay(0, 4, 0);
+    wait_cap(0, prev, 4000);
+    expect_bytes(4);
 
     if (sec_mismatch != 0) begin
       $display("FAIL secondary protect mismatches %0d", sec_mismatch);

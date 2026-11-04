@@ -25,12 +25,17 @@ compile_run tb_fc_rs_fec \
   rtl/fc128/fc_rs_fec.sv \
   tb/fc128/tb_fc_rs_fec.sv
 
+compile_run tb_fc_link \
+  rtl/fc128/fc_link_sm.sv \
+  tb/fc128/tb_fc_link.sv
+
 compile_run tb_fc128_bridge \
   rtl/fc128/fc_scrambler.sv \
   rtl/fc128/fc_async_fifo.sv \
   rtl/fc128/fc_rx_front.sv \
   rtl/fc128/fc_rs_fec.sv \
   rtl/fc128/fc_lane_pair.sv \
+  rtl/fc128/fc_link_sm.sv \
   rtl/fc128/fc_pipe.sv \
   rtl/fc128/fc_port.sv \
   rtl/fc128/fc128_bridge_top.sv \

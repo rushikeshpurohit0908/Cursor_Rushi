@@ -6,9 +6,9 @@
 //   * sec_*     is the extra 8 x 58G bank (protect copy or squelch)
 //
 // The block coding, ordered sets, and RS(255,239) FEC are the PoC mapping of
-// the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox). FC-PI-8
-// production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec is the
-// replacement point. Ordered-set bytes are documented in fc128_defs.vh.
+// the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox, link
+// init). FC-PI-8 production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec
+// is the replacement point. Ordered-set bytes are documented in fc128_defs.vh.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -118,6 +118,11 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][31:0] p_crc;
   logic [N_CLIENT-1:0][31:0] p_corr;
   logic [N_CLIENT-1:0][31:0] p_fail;
+  logic [N_CLIENT-1:0]       p_client_up;
+  logic [N_CLIENT-1:0]       p_system_up;
+  logic [N_CLIENT-1:0]       p_sys_lock;
+  logic [N_CLIENT-1:0][2:0]  p_client_ls;
+  logic [N_CLIENT-1:0][2:0]  p_system_ls;
 
   logic [2*N_CLIENT-1:0]       port_sys_rx_valid;
   logic [2*N_CLIENT-1:0]       port_sys_rx_ready;
@@ -182,7 +187,12 @@ module fc128_bridge_top #(
         .stat_tx_frames  (p_tx[gi]),
         .stat_crc_err    (p_crc[gi]),
         .stat_fec_corr   (p_corr[gi]),
-        .stat_fec_fail   (p_fail[gi])
+        .stat_fec_fail   (p_fail[gi]),
+        .client_link_up  (p_client_up[gi]),
+        .system_link_up  (p_system_up[gi]),
+        .client_ls       (p_client_ls[gi]),
+        .system_ls       (p_system_ls[gi]),
+        .sys_locked      (p_sys_lock[gi])
       );
 
       // Secondary 58G bank. Protect mode mirrors the even lane of the pair
@@ -242,6 +252,9 @@ module fc128_bridge_top #(
       12'h010: rdata_mux = {{(32-N_CLIENT){1'b0}}, port_en};
       12'h014: rdata_mux = scratch;
       12'h018: rdata_mux = {16'h0, p_cli[0], p_sys[0]};
+      12'h01C: rdata_mux = {{(32-N_CLIENT){1'b0}}, p_client_up};
+      12'h020: rdata_mux = {{(32-N_CLIENT){1'b0}}, p_system_up};
+      12'h028: rdata_mux = {{(32-N_CLIENT){1'b0}}, p_sys_lock};
       default: begin
         if (csr_addr[11:8] == 4'h1 && csr_addr[7:5] < N_CLIENT) begin
           case (csr_addr[4:2])
@@ -251,6 +264,8 @@ module fc128_bridge_top #(
             3'd3: rdata_mux = p_corr[port_idx];
             3'd4: rdata_mux = p_fail[port_idx];
             3'd5: rdata_mux = {15'h0, p_lock[port_idx], p_cli[port_idx], p_sys[port_idx]};
+            3'd6: rdata_mux = {16'h0, 2'b00, p_system_ls[port_idx], p_client_ls[port_idx],
+                               6'h0, p_system_up[port_idx], p_client_up[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end
