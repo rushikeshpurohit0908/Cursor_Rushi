@@ -626,6 +626,59 @@ module tb_fc128_bridge;
       $display("FAIL cmis monitors %h", rdw);
       errors = errors + 1;
     end
+    // DPDeinit is clear, so the lane commissions to DPActivated on its own.
+    begin : cmis_dp
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && rdw[3:0] == 4'h4 && rdw[5] && rdw[4])
+          disable cmis_dp;
+      end
+      $display("FAIL cmis dp active %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0061);
+    begin : cmis_dpde
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && rdw[7] && rdw[3:0] == 4'h1 && !rdw[5] && !rdw[4])
+          disable cmis_dpde;
+      end
+      $display("FAIL cmis dp deinit %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0021);
+    begin : cmis_dpon
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && !rdw[7] && rdw[3:0] == 4'h4 && rdw[5] && rdw[4])
+          disable cmis_dpon;
+      end
+      $display("FAIL cmis dp reinit %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_00A1);
+    csr_read_t(12'h200, rdw);
+    if (rdw !== 32'h0000_0021) begin
+      $display("FAIL cmis apply sticky %h", rdw);
+      errors = errors + 1;
+    end
+    begin : cmis_dpre
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[8] && rdw[3:0] == 4'h4 && rdw[5] && rdw[4] && !rdw[9])
+          disable cmis_dpre;
+      end
+      $display("FAIL cmis dp after apply %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h200, 32'h0000_0023);
     begin : cmis_lp
       integer k;
