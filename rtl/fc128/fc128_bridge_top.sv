@@ -17,7 +17,10 @@
 // DPDeinit, OutputSquelchForceTx, and ApplyDPInit are written on page 10h.
 // Page 10h byte 145 is the staged AppSel. Page 11h is the data-path state,
 // ConfigStatus, the active AppSel, and the five lane-1 flags. Bits [13:9]
-// of the cage control register are the flag masks. The line rate for that port
+// of the cage control register are the flag masks. Lane-1 optical power
+// and laser bias are at `0x300` and `0x304`. The twelve threshold flags
+// are at `0x308`, and their mask (reset to all ones) is at `0x30C`. The
+// line rate for that port
 // is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 stays set while
 // that write is applied: both links drop, the pipes finish the current
 // frame, and the system path restarts on the new lane map.
@@ -195,6 +198,11 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_flol_tx;
   logic [N_CLIENT-1:0]       cmis_flos_rx;
   logic [N_CLIENT-1:0]       cmis_flol_rx;
+  logic [N_CLIENT-1:0][15:0] cmis_opt_tx;
+  logic [N_CLIENT-1:0][15:0] cmis_bias;
+  logic [N_CLIENT-1:0][15:0] cmis_opt_rx;
+  logic [N_CLIENT-1:0][11:0] cmis_oflag;
+  logic [N_CLIENT-1:0][11:0] cmis_omask;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
@@ -295,6 +303,7 @@ module fc128_bridge_top #(
         .staged_appsel(cmis_staged[gi]),
         .apply_pulse(cmis_apply[gi]),
         .flag_mask(cmis_mask[gi]),
+        .opt_mask(cmis_omask[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -327,6 +336,10 @@ module fc128_bridge_top #(
         .flag_lol_tx(cmis_flol_tx[gi]),
         .flag_los_rx(cmis_flos_rx[gi]),
         .flag_lol_rx(cmis_flol_rx[gi]),
+        .opt_tx_u16(cmis_opt_tx[gi]),
+        .bias_tx_u16(cmis_bias[gi]),
+        .opt_rx_u16(cmis_opt_rx[gi]),
+        .opt_flags(cmis_oflag[gi]),
         .scl_oe(cmis_scl_oe[gi]),
         .sda_oe(cmis_sda_oe[gi]),
         .scl_i(cmis_scl_i[gi]),
@@ -359,6 +372,7 @@ module fc128_bridge_top #(
       cmis_dpde  <= '0;
       cmis_staged <= {N_CLIENT{CMIS_APP_128}};
       cmis_mask  <= {N_CLIENT{5'h1F}};
+      cmis_omask <= {N_CLIENT{12'hFFF}};
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
       cmis_apply <= '0;
@@ -391,6 +405,9 @@ module fc128_bridge_top #(
       end else if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd7 &&
                    csr_addr[7:5] < N_CLIENT) begin
         cmis_staged[csr_addr[7:5]] <= csr_wdata[7:0];
+      end else if (csr_write && csr_addr[11:8] == 4'h3 && csr_addr[4:2] == 3'd3 &&
+                   csr_addr[7:5] < N_CLIENT) begin
+        cmis_omask[csr_addr[7:5]] <= csr_wdata[11:0];
       end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
@@ -478,6 +495,18 @@ module fc128_bridge_top #(
             // ConfigStatus, active AppSel, staged AppSel.
             3'd7: rdata_mux = {12'h0, cmis_cfg[port_idx], cmis_act[port_idx],
                                cmis_staged[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h3 && csr_addr[7:5] < N_CLIENT) begin
+          case (csr_addr[4:2])
+            // {OpticalPowerRx, OpticalPowerTx}, 0.1 uW. Not packed into 0x214.
+            3'd0: rdata_mux = {cmis_opt_rx[port_idx], cmis_opt_tx[port_idx]};
+            // LaserBiasTx, 2 uA.
+            3'd1: rdata_mux = {16'h0, cmis_bias[port_idx]};
+            // {Rx LW, Rx HW, Rx LA, Rx HA, bias LW, bias HW, bias LA, bias HA,
+            //  Tx LW, Tx HW, Tx LA, Tx HA}.
+            3'd2: rdata_mux = {20'h0, cmis_oflag[port_idx]};
+            3'd3: rdata_mux = {20'h0, cmis_omask[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

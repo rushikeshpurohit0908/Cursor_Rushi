@@ -19,6 +19,7 @@ module tb_fc_cmis;
   logic dp_deinit = 0;
   logic apply_pulse = 0;
   logic [4:0] lane_mask = 5'h1F;
+  logic [11:0] opt_mask = 12'hFFF;
   logic fail_tx = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -30,6 +31,9 @@ module tb_fc_cmis;
   logic force_fault = 0;
   logic [15:0] temp_s16 = 16'h2880;
   logic [15:0] vcc_u16 = 16'h80E8;
+  logic [15:0] opt_tx = 16'd8000;
+  logic [15:0] bias_tx = 16'd20000;
+  logic [15:0] opt_rx = 16'd1000;
 
   logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb, dp_deinit_rb;
   logic [7:0] ident, rev, flag0, flag1, flag2, flag3, txdis_byte, dpde_byte;
@@ -41,6 +45,8 @@ module tb_fc_cmis;
   logic [3:0] cfg_h, cfg_s;
   logic [7:0] active_h, active_s, squelch_byte, ignored;
   logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
+  logic [15:0] opt_tx_rb, bias_rb, opt_rx_rb;
+  logic [11:0] opt_flags;
   logic int_n;
   logic rx_mod, tx_mod, pend_s;
   logic scl_oe, sda_oe, sda_slave;
@@ -54,6 +60,7 @@ module tb_fc_cmis;
     .tx_squelch(tx_squelch), .dp_deinit(dp_deinit),
     .staged_appsel(staged), .apply_pulse(apply_pulse),
     .flag_mask(lane_mask),
+    .opt_mask(opt_mask),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -70,6 +77,8 @@ module tb_fc_cmis;
     .flag_fail_tx(flag_fail), .flag_los_tx(flag_los_tx),
     .flag_lol_tx(flag_lol_tx), .flag_los_rx(flag_los_rx),
     .flag_lol_rx(flag_lol_rx),
+    .opt_tx_u16(opt_tx_rb), .bias_tx_u16(bias_rb), .opt_rx_u16(opt_rx_rb),
+    .opt_flags(opt_flags),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -82,6 +91,7 @@ module tb_fc_cmis;
     .fail_tx(fail_tx), .los_tx(los_tx), .lol_tx(lol_tx),
     .los_rx(los_rx), .lol_rx(lol_rx),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
+    .opt_tx_u16(opt_tx), .bias_tx_u16(bias_tx), .opt_rx_u16(opt_rx),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .dpde_byte(dpde_byte),
     .dp_state(dp_mod), .rx_status(rx_mod), .tx_status(tx_mod),
     .flag_state(flag_state),
@@ -427,6 +437,127 @@ module tb_fc_cmis;
       end
       $display("FAIL LOS restore flag %b int %b mask %h",
                flag_los_rx, int_n, mod.p10[CMIS_MLOSRX]);
+      errors = errors + 1;
+    end
+
+    // 8000 / 20000 / 1000 sit inside every threshold, so no optical flag
+    // is set and the masks, which power up at 1, keep IntL high.
+    begin : mon_quiet
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_tx_rb == 16'd8000 && bias_rb == 16'd20000 && opt_rx_rb == 16'd1000 &&
+            opt_flags == 12'h000 && int_n && !busy)
+          disable mon_quiet;
+      end
+      $display("FAIL monitors %h %h %h flags %h", opt_tx_rb, bias_rb, opt_rx_rb, opt_flags);
+      errors = errors + 1;
+    end
+    // Equal to the high-alarm threshold is not a high alarm. It is still
+    // above the high-warning threshold.
+    opt_tx = CMIS_TX_HA;
+    begin : mon_eq
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_tx_rb == CMIS_TX_HA && opt_flags[3:0] == 4'b0100 && int_n && !busy)
+          disable mon_eq;
+      end
+      $display("FAIL tx equal HA flags %h tx %h", opt_flags, opt_tx_rb);
+      errors = errors + 1;
+    end
+    opt_tx = CMIS_TX_HA + 16'd1;
+    begin : mon_ha
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_tx_rb == CMIS_TX_HA + 16'd1 && opt_flags[3:0] == 4'b0101 &&
+            int_n && mod.p10[CMIS_M_TXHA] == 8'hFF && !busy)
+          disable mon_ha;
+      end
+      $display("FAIL tx high alarm flags %h mask %h", opt_flags, mod.p10[CMIS_M_TXHA]);
+      errors = errors + 1;
+    end
+    // Unmask Tx high alarm only. Bit 0 follows the CSR; bits [7:1] stay 1.
+    opt_mask[0] = 1'b0;
+    begin : mon_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_flags[0] && !opt_flags[1] && !int_n && !int_deasserted &&
+            mod.p10[CMIS_M_TXHA] == 8'hFE && mod.p10[CMIS_M_TXHW] == 8'hFF &&
+            mod.p10[CMIS_M_RXLW] == 8'hFF && !busy)
+          disable mon_int;
+      end
+      $display("FAIL tx alarm IntL flags %h int %b mask %h %h",
+               opt_flags, int_n, mod.p10[CMIS_M_TXHA], mod.p10[CMIS_M_TXHW]);
+      errors = errors + 1;
+    end
+    opt_tx = 16'd8000;
+    opt_mask = 12'hFFF;
+    begin : mon_rest
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_flags == 12'h000 && opt_tx_rb == 16'd8000 && int_n &&
+            int_deasserted && mod.p10[CMIS_M_TXHA] == 8'hFF && !busy)
+          disable mon_rest;
+      end
+      $display("FAIL tx alarm restore flags %h int %b mask %h",
+               opt_flags, int_n, mod.p10[CMIS_M_TXHA]);
+      errors = errors + 1;
+    end
+    // Equal to the low-alarm threshold is not a low alarm. It is still
+    // below the low-warning threshold.
+    bias_tx = CMIS_BI_LA;
+    begin : mon_bias
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (bias_rb == CMIS_BI_LA && opt_flags[7:4] == 4'b1000 && int_n && !busy)
+          disable mon_bias;
+      end
+      $display("FAIL bias equal LA flags %h bias %h", opt_flags, bias_rb);
+      errors = errors + 1;
+    end
+    bias_tx = CMIS_BI_LA - 16'd1;
+    begin : mon_bias_la
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (bias_rb == CMIS_BI_LA - 16'd1 && opt_flags[7:4] == 4'b1010 && !busy)
+          disable mon_bias_la;
+      end
+      $display("FAIL bias low alarm flags %h bias %h", opt_flags, bias_rb);
+      errors = errors + 1;
+    end
+    bias_tx = 16'd20000;
+    begin : mon_bias_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_flags == 12'h000 && bias_rb == 16'd20000 && !busy)
+          disable mon_bias_clr;
+      end
+      $display("FAIL bias restore flags %h", opt_flags);
+      errors = errors + 1;
+    end
+    // A one-shot excursion below the Rx low alarm is held until that read.
+    opt_rx = CMIS_RX_LA - 16'd1;
+    repeat (30) @(posedge clk);
+    opt_rx = 16'd1000;
+    begin : mon_pulse
+      integer k;
+      reg saw;
+      saw = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (opt_flags[9])
+          saw = 1;
+        if (saw && opt_flags == 12'h000 && opt_rx_rb == 16'd1000 && !busy)
+          disable mon_pulse;
+      end
+      $display("FAIL rx pulse saw %b flags %h rx %h", saw, opt_flags, opt_rx_rb);
       errors = errors + 1;
     end
 

@@ -1,7 +1,7 @@
 // CMIS host for one SFP112 cage.
 //
 // The two-wire interface is the CMIS management interface (7-bit address
-// 0x50). While poll_en is set and ModPrsL is low, the host does five things:
+// 0x50). While poll_en is set and ModPrsL is low, the host does the following:
 //   * read-modify-write lower byte 26 so LowPwrRequestSW follows low_pwr_sw
 //     and a SoftwareReset pulse is a single write of bit 3. Bits 6 and 5
 //     (LowPwrAllowRequestHW, SquelchMethodSelect) are left as the module
@@ -18,7 +18,13 @@
 //   * select page 11h and read lane 1: DPState, OutputStatusRx,
 //     OutputStatusTx, DPStateChangedFlag, the five lane flags,
 //     DPInitPending, ConfigStatus, and the active AppSel. The flag
-//     bytes are clear-on-read in the module.
+//     bytes are clear-on-read in the module. After the first poll the
+//     same pass also takes OpticalPowerTx, LaserBiasTx, OpticalPowerRx,
+//     and the twelve optical/laser alarm flags. The first pass stays
+//     bytes 128-134 so bring-up sampling does not move.
+//   * select page 10h and read-modify-write bit 0 of the twelve
+//     optical/laser mask bytes (218-225 and 228-231) so they follow
+//     opt_mask. Bits [7:1] of those bytes are left as the module set them.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -42,6 +48,10 @@ module fc_cmis_host #(
   // [0] FailureFlagTx, [1] LOSFlagTx, [2] CDRLOLFlagTx,
   // [3] LOSFlagRx, [4] CDRLOLFlagRx. A 1 masks that flag off IntL.
   input  logic [4:0]  flag_mask,
+  // Same packing as CSR 0x30C: {Rx LW, Rx HW, Rx LA, Rx HA, bias LW,
+  // bias HW, bias LA, bias HA, Tx LW, Tx HW, Tx LA, Tx HA}. A 1 masks
+  // that flag off IntL.
+  input  logic [11:0] opt_mask,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -75,6 +85,10 @@ module fc_cmis_host #(
   output logic        flag_lol_tx,
   output logic        flag_los_rx,
   output logic        flag_lol_rx,
+  output logic [15:0] opt_tx_u16,
+  output logic [15:0] bias_tx_u16,
+  output logic [15:0] opt_rx_u16,
+  output logic [11:0] opt_flags,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -104,6 +118,12 @@ module fc_cmis_host #(
   localparam [4:0] OP_RD206 = 5'd17;
   localparam [4:0] OP_RDMSK = 5'd18;
   localparam [4:0] OP_WRMSK = 5'd19;
+  localparam [4:0] OP_MONTX = 5'd20;
+  localparam [4:0] OP_MONBI = 5'd21;
+  localparam [4:0] OP_MONRX = 5'd22;
+  localparam [4:0] OP_RDOPT = 5'd23;
+  localparam [4:0] OP_RDOM  = 5'd24;
+  localparam [4:0] OP_WROM  = 5'd25;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -117,6 +137,10 @@ module fc_cmis_host #(
   logic [7:0]  as_rb;
   logic [4:0]  mask_rb;
   logic [2:0]  mask_i;
+  logic        omask_ok;
+  logic [11:0] omask_rb;
+  logic [3:0]  omask_i;
+  logic [7:0]  opt_lo;
   logic [15:0] gapcnt;
 
   function automatic [7:0] mask_addr(input [2:0] idx);
@@ -128,6 +152,32 @@ module fc_cmis_host #(
         3'd3: mask_addr = CMIS_MLOSRX;
         default: mask_addr = CMIS_MLOLRX;
       endcase
+    end
+  endfunction
+
+  function automatic [7:0] omask_addr(input [3:0] idx);
+    begin
+      case (idx)
+        4'd0: omask_addr = CMIS_M_TXHA;
+        4'd1: omask_addr = CMIS_M_TXLA;
+        4'd2: omask_addr = CMIS_M_TXHW;
+        4'd3: omask_addr = CMIS_M_TXLW;
+        4'd4: omask_addr = CMIS_M_BIHA;
+        4'd5: omask_addr = CMIS_M_BILA;
+        4'd6: omask_addr = CMIS_M_BIHW;
+        4'd7: omask_addr = CMIS_M_BILW;
+        4'd8: omask_addr = CMIS_M_RXHA;
+        4'd9: omask_addr = CMIS_M_RXLA;
+        4'd10: omask_addr = CMIS_M_RXHW;
+        default: omask_addr = CMIS_M_RXLW;
+      endcase
+    end
+  endfunction
+
+  function automatic [11:0] omask_put(input [11:0] old, input [3:0] idx, input logic bitv);
+    begin
+      omask_put = old;
+      omask_put[idx] = bitv;
     end
   endfunction
 
@@ -196,6 +246,10 @@ module fc_cmis_host #(
       mask_arm  <= 1'b0;
       mask_rb   <= 5'h00;
       mask_i    <= 3'd0;
+      omask_ok  <= 1'b0;
+      omask_rb  <= 12'h000;
+      omask_i   <= 4'd0;
+      opt_lo    <= 8'h00;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
       gapcnt    <= 16'd0;
@@ -228,6 +282,10 @@ module fc_cmis_host #(
       flag_lol_tx  <= 1'b0;
       flag_los_rx  <= 1'b0;
       flag_lol_rx  <= 1'b0;
+      opt_tx_u16   <= 16'h0000;
+      bias_tx_u16  <= 16'h0000;
+      opt_rx_u16   <= 16'h0000;
+      opt_flags    <= 12'h000;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -255,7 +313,12 @@ module fc_cmis_host #(
           lane_ok   <= 1'b0;
           mask_ok   <= 1'b0;
           mask_arm  <= 1'b0;
+          omask_ok  <= 1'b0;
           lane_valid <= 1'b0;
+          opt_tx_u16  <= 16'h0000;
+          bias_tx_u16 <= 16'h0000;
+          opt_rx_u16  <= 16'h0000;
+          opt_flags   <= 12'h000;
           wait_gap  <= 1'b1;
           gapcnt    <= GAPW[15:0];
         end else begin
@@ -298,6 +361,8 @@ module fc_cmis_host #(
                 cmd_addr <= CMIS_SCS0;
               else if (nxt == OP_RDMSK)
                 cmd_addr <= mask_addr(3'd0);
+              else if (nxt == OP_RDOM)
+                cmd_addr <= omask_addr(4'd0);
               else
                 cmd_addr <= CMIS_TXDIS;
               launch <= 1'b1;
@@ -384,6 +449,15 @@ module fc_cmis_host #(
                 flag_lol_tx  <= cap[CMIS_FLOLTX - CMIS_DPDEINIT][0];
                 flag_los_rx  <= cap[CMIS_FLOSRX - CMIS_DPDEINIT][0];
                 flag_lol_rx  <= cap[CMIS_FLOLRX - CMIS_DPDEINIT][0];
+                // Bytes 139-146. {bias LW, HW, LA, HA, Tx LW, HW, LA, HA}.
+                opt_lo <= {cap[CMIS_F_BILW - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_BIHW - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_BILA - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_BIHA - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_TXLW - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_TXHW - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_TXLA - CMIS_DPDEINIT][0],
+                           cap[CMIS_F_TXHA - CMIS_DPDEINIT][0]};
               end
               op           <= OP_RD235;
               cmd_write  <= 1'b0;
@@ -409,8 +483,47 @@ module fc_cmis_host #(
             end
             OP_RD206: begin
               active_appsel <= cap[0];
-              lane_valid    <= 1'b1;
-              lane_ok       <= 1'b1;
+              if (mask_arm) begin
+                op        <= OP_MONTX;
+                cmd_write <= 1'b0;
+                cmd_addr  <= CMIS_OPT_TX;
+                cmd_rlen  <= 6'd2;
+                launch    <= 1'b1;
+              end else begin
+                lane_valid <= 1'b1;
+                lane_ok    <= 1'b1;
+              end
+            end
+            OP_MONTX: begin
+              opt_tx_u16 <= {cap[0], cap[1]};
+              op         <= OP_MONBI;
+              cmd_write  <= 1'b0;
+              cmd_addr   <= CMIS_BIAS_TX;
+              cmd_rlen   <= 6'd2;
+              launch     <= 1'b1;
+            end
+            OP_MONBI: begin
+              bias_tx_u16 <= {cap[0], cap[1]};
+              op          <= OP_MONRX;
+              cmd_write   <= 1'b0;
+              cmd_addr    <= CMIS_OPT_RX;
+              cmd_rlen    <= 6'd2;
+              launch      <= 1'b1;
+            end
+            OP_MONRX: begin
+              opt_rx_u16 <= {cap[0], cap[1]};
+              op         <= OP_RDOPT;
+              cmd_write  <= 1'b0;
+              cmd_addr   <= CMIS_F_RXHA;
+              cmd_rlen   <= 6'd4;
+              launch     <= 1'b1;
+            end
+            OP_RDOPT: begin
+              // Bytes 149-152: {Rx LW, Rx HW, Rx LA, Rx HA} over the
+              // Tx-power and bias flags captured with bytes 128-148.
+              opt_flags  <= {cap[3][0], cap[2][0], cap[1][0], cap[0][0], opt_lo};
+              lane_valid <= 1'b1;
+              lane_ok    <= 1'b1;
             end
             OP_RDMSK: begin
               if (cap[0][0] == flag_mask[mask_i]) begin
@@ -443,6 +556,41 @@ module fc_cmis_host #(
                 op        <= OP_RDMSK;
                 cmd_write <= 1'b0;
                 cmd_addr  <= mask_addr(mask_i + 3'd1);
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_RDOM: begin
+              if (cap[0][0] == opt_mask[omask_i]) begin
+                omask_rb <= omask_put(omask_rb, omask_i, opt_mask[omask_i]);
+                if (omask_i == 4'd11) begin
+                  omask_ok <= 1'b1;
+                end else begin
+                  omask_i   <= omask_i + 4'd1;
+                  op        <= OP_RDOM;
+                  cmd_write <= 1'b0;
+                  cmd_addr  <= omask_addr(omask_i + 4'd1);
+                  cmd_rlen  <= 6'd1;
+                  launch    <= 1'b1;
+                end
+              end else begin
+                op        <= OP_WROM;
+                cmd_write <= 1'b1;
+                cmd_addr  <= omask_addr(omask_i);
+                cmd_wdata <= merge_bit0(cap[0], opt_mask[omask_i]);
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_WROM: begin
+              omask_rb <= omask_put(omask_rb, omask_i, opt_mask[omask_i]);
+              if (omask_i == 4'd11) begin
+                omask_ok <= 1'b1;
+              end else begin
+                omask_i   <= omask_i + 4'd1;
+                op        <= OP_RDOM;
+                cmd_write <= 1'b0;
+                cmd_addr  <= omask_addr(omask_i + 4'd1);
                 cmd_rlen  <= 6'd1;
                 launch    <= 1'b1;
               end
@@ -481,7 +629,12 @@ module fc_cmis_host #(
             lane_ok    <= 1'b0;
             mask_ok    <= 1'b0;
             mask_arm   <= 1'b0;
+            omask_ok   <= 1'b0;
             lane_valid <= 1'b0;
+            opt_tx_u16  <= 16'h0000;
+            bias_tx_u16 <= 16'h0000;
+            opt_rx_u16  <= 16'h0000;
+            opt_flags   <= 12'h000;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -546,6 +699,15 @@ module fc_cmis_host #(
           mask_i    <= 3'd0;
           op        <= OP_PG;
           nxt       <= OP_RDMSK;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (mask_arm && (!omask_ok || (opt_mask != omask_rb))) begin
+          omask_i   <= 4'd0;
+          op        <= OP_PG;
+          nxt       <= OP_RDOM;
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_LANE_PAGE;

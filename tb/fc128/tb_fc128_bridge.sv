@@ -36,6 +36,9 @@ module tb_fc128_bridge;
   logic cmis_sda_s;
   logic [15:0] cmis_temp = 16'h2880;
   logic [15:0] cmis_vcc = 16'h80E8;
+  logic [15:0] sfp_opt_tx = 16'd8000;
+  logic [15:0] sfp_bias = 16'd20000;
+  logic [15:0] sfp_opt_rx = 16'd1000;
 
   assign cmis_scl_i[0] = ~cmis_scl_oe[0];
   assign cmis_sda_i[0] = ~(cmis_sda_oe[0] | cmis_sda_s);
@@ -78,6 +81,7 @@ module tb_fc128_bridge;
     .fail_tx(sfp_fail_tx), .los_tx(sfp_los_tx), .lol_tx(sfp_lol_tx),
     .los_rx(sfp_los_rx), .lol_rx(sfp_lol_rx),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
+    .opt_tx_u16(sfp_opt_tx), .bias_tx_u16(sfp_bias), .opt_rx_u16(sfp_opt_rx),
     .mod_state(), .txdis_byte(), .flag_state()
   );
 
@@ -434,6 +438,21 @@ module tb_fc128_bridge;
     csr_read_t(12'h200, rdw);
     if (rdw !== 32'h0000_3E20) begin
       $display("FAIL cmis ctrl %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h30C, rdw);
+    if (rdw !== 32'h0000_0FFF) begin
+      $display("FAIL cmis opt mask %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h300, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis opt power reset %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h308, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis opt flags reset %h", rdw);
       errors = errors + 1;
     end
     csr_read_t(12'h204, rdw);
@@ -835,6 +854,69 @@ module tb_fc128_bridge;
       $display("FAIL cmis failure clear %h", rdw);
       errors = errors + 1;
     end
+    begin : cmis_opt
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h300, rdw);
+        if (rdw == {16'd1000, 16'd8000}) begin
+          csr_read_t(12'h304, rdw);
+          if (rdw == {16'h0, 16'd20000}) begin
+            csr_read_t(12'h308, rdw);
+            if (rdw == 32'h0 && sfp_int_n)
+              disable cmis_opt;
+          end
+        end
+      end
+      $display("FAIL cmis optical %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    sfp_opt_tx = 16'd20001;
+    begin : cmis_opt_ha
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h308, rdw);
+        if (rdw[3:0] == 4'b0101 && sfp_int_n) begin
+          csr_read_t(12'h300, rdw);
+          if (rdw[15:0] == 16'd20001)
+            disable cmis_opt_ha;
+        end
+      end
+      $display("FAIL cmis tx alarm %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h30C, 32'h0000_0FFE);
+    begin : cmis_opt_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h30C, rdw);
+        if (rdw[11:0] == 12'hFFE) begin
+          csr_read_t(12'h308, rdw);
+          if (rdw[0] && !sfp_int_n) begin
+            csr_read_t(12'h204, rdw);
+            if (!rdw[24] && !rdw[19])
+              disable cmis_opt_int;
+          end
+        end
+      end
+      $display("FAIL cmis tx alarm int %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    sfp_opt_tx = 16'd8000;
+    begin : cmis_opt_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h308, rdw);
+        if (rdw == 32'h0 && sfp_int_n)
+          disable cmis_opt_clr;
+      end
+      $display("FAIL cmis tx alarm clear %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h30C, 32'h0000_0FFF);
     csr_write_t(12'h200, 32'h0000_0023);
     begin : cmis_lp
       integer k;
