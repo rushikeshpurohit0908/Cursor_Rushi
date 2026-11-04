@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 // CMIS 5.0 host against a behavioral SFP112: power-up, low power, software
-// reset, lane-1 OutputDisableTx, module fault, and an absent module.
+// reset, lane-1 OutputDisableTx, the data path, module fault, and an absent module.
 module tb_fc_cmis;
   `include "fc_cmis.vh"
 
@@ -12,6 +12,7 @@ module tb_fc_cmis;
   logic low_pwr_sw = 0;
   logic sw_pulse = 0;
   logic tx_disable = 0;
+  logic dp_deinit = 0;
   logic mod_prs_n = 0;
   logic lpmode = 0;
   logic reset_n = 1;
@@ -19,8 +20,9 @@ module tb_fc_cmis;
   logic [15:0] temp_s16 = 16'h2880;
   logic [15:0] vcc_u16 = 16'h80E8;
 
-  logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb;
-  logic [7:0] ident, rev, flag0, flag1, flag2, flag3, txdis_byte;
+  logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, dp_deinit_rb, dp_act;
+  logic [7:0] ident, rev, flag0, flag1, flag2, flag3, txdis_byte, dpdeinit_byte;
+  logic [3:0] dp_rb, slave_dp;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state;
   logic [15:0] temp_rb, vcc_rb;
@@ -32,9 +34,11 @@ module tb_fc_cmis;
     .clk(clk), .rst_n(rst_n),
     .poll_en(poll_en), .low_pwr_sw(low_pwr_sw),
     .sw_reset_pulse(sw_pulse), .tx_disable(tx_disable),
+    .dp_deinit(dp_deinit),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
+    .dp_state(dp_rb), .dp_deinit_rb(dp_deinit_rb), .dp_activated(dp_act),
     .ident(ident), .rev(rev), .mod_state(mod_state),
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
@@ -47,7 +51,8 @@ module tb_fc_cmis;
     .scl_i(scl_i), .sda_i(sda_i), .sda_oe(sda_slave),
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
-    .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state)
+    .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
+    .dp_state(slave_dp), .dpdeinit_byte(dpdeinit_byte)
   );
 
   integer errors = 0;
@@ -175,6 +180,33 @@ module tb_fc_cmis;
     end
     reset_n = 1;
     wait_state(CMIS_ST_RDY, 200000, "reset released");
+
+    begin : dp_up
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (dp_act && dp_rb == CMIS_DP_ACT && slave_dp == CMIS_DP_ACT &&
+            dpdeinit_byte == 8'hFE && !dp_deinit_rb && !busy)
+          disable dp_up;
+      end
+      $display("FAIL dp activate host %h slave %h byte %h rb %b act %b",
+               dp_rb, slave_dp, dpdeinit_byte, dp_deinit_rb, dp_act);
+      errors = errors + 1;
+    end
+
+    dp_deinit = 1;
+    begin : dp_hold
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (dp_rb == CMIS_DP_DEACT && slave_dp == CMIS_DP_DEACT &&
+            dp_deinit_rb && dpdeinit_byte[0] && !dp_act && !busy)
+          disable dp_hold;
+      end
+      $display("FAIL dp deinit host %h slave %h byte %h",
+               dp_rb, slave_dp, dpdeinit_byte);
+      errors = errors + 1;
+    end
 
     if (errors == 0)
       $display("PASS tb_fc_cmis");

@@ -69,7 +69,8 @@ module tb_fc128_bridge;
     .scl_i(cmis_scl_i[0]), .sda_i(cmis_sda_i[0]), .sda_oe(cmis_sda_s),
     .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
-    .mod_state(), .txdis_byte(), .flag_state()
+    .mod_state(), .txdis_byte(), .flag_state(),
+    .dp_state(), .dpdeinit_byte()
   );
 
   logic        drive_en = 0;

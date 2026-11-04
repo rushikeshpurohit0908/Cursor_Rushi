@@ -3,7 +3,10 @@
 // Lower memory follows CMIS 5.0. Byte 0 is SFF-8024 identifier 20h
 // (SFP/SFP+ with CMIS). Byte 26 bit 4 is LowPwrRequestSW, bit 6 is
 // LowPwrAllowRequestHW, and bit 3 is the self-clearing SoftwareReset.
-// Page 10h byte 130 bit 0 is OutputDisableTx for lane 1. Temperature is
+// Page 10h byte 130 bit 0 is OutputDisableTx for lane 1. Page 10h byte 128
+// bit 0 is DPDeinit for lane 1. Page 11h byte 128 bits [3:0] report the
+// data path state. The path steps forward only while the module is
+// ModuleReady. Temperature is
 // signed 1/256 C at bytes 14-15. Supply is unsigned 100 uV at bytes 16-17.
 // The slave does not stretch SCL. sda_oe drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
@@ -22,7 +25,9 @@ module cmis_sfp_slave #(
   input  logic [15:0] vcc_u16,
   output logic [2:0]  mod_state,
   output logic [7:0]  txdis_byte,
-  output logic        flag_state
+  output logic        flag_state,
+  output logic [3:0]  dp_state,
+  output logic [7:0]  dpdeinit_byte
 );
   `include "fc_cmis.vh"
 
@@ -50,6 +55,8 @@ module cmis_sfp_slave #(
   logic       held;
   logic       raise_flag;
   logic [2:0] mod_state_q;
+  logic [3:0] dp_q;
+  logic [15:0] dp_cnt;
   logic [15:0] pwr_cnt;
   integer ii;
 
@@ -62,6 +69,8 @@ module cmis_sfp_slave #(
 
   assign txdis_byte = p10[CMIS_TXDIS];
   assign flag_state = flag_sc;
+  assign dp_state = dp_q;
+  assign dpdeinit_byte = p10[CMIS_DPDEINIT];
   assign mod_state = force_fault ? CMIS_ST_FLT :
                      sw_resetting ? CMIS_ST_LOW : mod_state_q;
 
@@ -93,6 +102,8 @@ module cmis_sfp_slave #(
         peek = mem[a];
       else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE)
         peek = p10[a];
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_DPDEINIT)
+        peek = {4'h0, dp_q};
       else
         peek = 8'h00;
     end
@@ -111,6 +122,7 @@ module cmis_sfp_slave #(
       mem[31] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       p10[CMIS_TXDIS] <= TXDIS_INIT;
+      p10[CMIS_DPDEINIT] <= 8'hFF;
       st <= S_IDLE;
       sh <= 8'h00;
       bits <= 4'd0;
@@ -242,6 +254,8 @@ module cmis_sfp_slave #(
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       mod_state_q <= CMIS_ST_LOW;
+      dp_q <= CMIS_DP_DEACT;
+      dp_cnt <= 16'd0;
       flag_sc <= 1'b0;
       sw_resetting <= 1'b0;
       held <= 1'b0;
@@ -309,6 +323,36 @@ module cmis_sfp_slave #(
         flag_sc <= 1'b1;
       else if (flag_clr)
         flag_sc <= 1'b0;
+
+      // Lane 1 data path. A module that is not ModuleReady reports
+      // DPDeactivated. DPDeinit holds the lane down. With DPDeinit clear,
+      // the lane reaches DPInitialized, and then DPActivated unless
+      // OutputDisableTx is set.
+      if (sw_resetting || force_fault || (mod_state_q != CMIS_ST_RDY)) begin
+        dp_q   <= CMIS_DP_DEACT;
+        dp_cnt <= 16'd0;
+      end else if (dp_cnt != 16'd0) begin
+        dp_cnt <= dp_cnt - 16'd1;
+      end else begin
+        dp_cnt <= PWR_DLY[15:0];
+        if (p10[CMIS_DPDEINIT][0]) begin
+          if (dp_q == CMIS_DP_DEACT || dp_q == CMIS_DP_DEINIT)
+            dp_q <= CMIS_DP_DEACT;
+          else
+            dp_q <= CMIS_DP_DEINIT;
+        end else begin
+          case (dp_q)
+            CMIS_DP_DEACT:  dp_q <= CMIS_DP_INIT;
+            CMIS_DP_INIT:   dp_q <= CMIS_DP_INITD;
+            CMIS_DP_DEINIT: dp_q <= CMIS_DP_DEACT;
+            CMIS_DP_INITD:  dp_q <= p10[CMIS_TXDIS][0] ? CMIS_DP_INITD : CMIS_DP_TXON;
+            CMIS_DP_TXON:   dp_q <= p10[CMIS_TXDIS][0] ? CMIS_DP_TXOFF : CMIS_DP_ACT;
+            CMIS_DP_ACT:    dp_q <= p10[CMIS_TXDIS][0] ? CMIS_DP_TXOFF : CMIS_DP_ACT;
+            CMIS_DP_TXOFF:  dp_q <= CMIS_DP_INITD;
+            default:        dp_q <= CMIS_DP_DEACT;
+          endcase
+        end
+      end
     end
   end
 endmodule

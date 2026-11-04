@@ -13,7 +13,8 @@
 // packed groups: twenty 257-bit words, then five sync-11 parity beats.
 // The frame RAM stays on RS(255,239). Ordered sets are in fc128_defs.vh.
 // Each client cage has a CMIS 5.0 two-wire host (fc_cmis_host). The CSR
-// window is 0x200 + 32*port. LPMode and ResetL are cage pins.
+// window is 0x200 + 32*port. LPMode and ResetL are cage pins. Control bit 6
+// is DPDeinit for lane 1. Page 11h data-path state is at +0x14.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -150,6 +151,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_lp_sw;
   logic [N_CLIENT-1:0]       cmis_lp_hw;
   logic [N_CLIENT-1:0]       cmis_txdis;
+  logic [N_CLIENT-1:0]       cmis_dpdis;
   logic [N_CLIENT-1:0]       cmis_rstn;
   logic [N_CLIENT-1:0]       cmis_swrst;
   logic [N_CLIENT-1:0]       cmis_busy;
@@ -158,6 +160,9 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_armed;
   logic [N_CLIENT-1:0]       cmis_lp_rb;
   logic [N_CLIENT-1:0]       cmis_tx_rb;
+  logic [N_CLIENT-1:0][3:0]  cmis_dp_st;
+  logic [N_CLIENT-1:0]       cmis_dp_rb;
+  logic [N_CLIENT-1:0]       cmis_dp_act;
   logic [N_CLIENT-1:0]       cmis_intd;
   logic [N_CLIENT-1:0][7:0]  cmis_id;
   logic [N_CLIENT-1:0][7:0]  cmis_rev;
@@ -258,6 +263,7 @@ module fc128_bridge_top #(
         .low_pwr_sw(cmis_lp_sw[gi]),
         .sw_reset_pulse(cmis_swrst[gi]),
         .tx_disable(cmis_txdis[gi]),
+        .dp_deinit(cmis_dpdis[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -265,6 +271,9 @@ module fc128_bridge_top #(
         .armed(cmis_armed[gi]),
         .low_pwr_rb(cmis_lp_rb[gi]),
         .tx_disable_rb(cmis_tx_rb[gi]),
+        .dp_state(cmis_dp_st[gi]),
+        .dp_deinit_rb(cmis_dp_rb[gi]),
+        .dp_activated(cmis_dp_act[gi]),
         .ident(cmis_id[gi]),
         .rev(cmis_rev[gi]),
         .mod_state(cmis_st[gi]),
@@ -303,6 +312,7 @@ module fc128_bridge_top #(
       cmis_lp_sw <= '0;
       cmis_lp_hw <= '0;
       cmis_txdis <= '0;
+      cmis_dpdis <= '0;
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
     end else begin
@@ -319,6 +329,7 @@ module fc128_bridge_top #(
         cmis_txdis[csr_addr[7:5]] <= csr_wdata[3];
         cmis_lp_hw[csr_addr[7:5]] <= csr_wdata[4];
         cmis_rstn[csr_addr[7:5]]  <= csr_wdata[5];
+        cmis_dpdis[csr_addr[7:5]] <= csr_wdata[6];
       end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
@@ -376,9 +387,9 @@ module fc128_bridge_top #(
           endcase
         end else if (csr_addr[11:8] == 4'h2 && csr_addr[7:5] < N_CLIENT) begin
           case (csr_addr[4:2])
-            3'd0: rdata_mux = {26'h0, cmis_rstn[port_idx], cmis_lp_hw[port_idx],
-                               cmis_txdis[port_idx], 1'b0, cmis_lp_sw[port_idx],
-                               cmis_poll[port_idx]};
+            3'd0: rdata_mux = {25'h0, cmis_dpdis[port_idx], cmis_rstn[port_idx],
+                               cmis_lp_hw[port_idx], cmis_txdis[port_idx], 1'b0,
+                               cmis_lp_sw[port_idx], cmis_poll[port_idx]};
             3'd1: rdata_mux = {3'h0, cmis_tx_rb[port_idx], cmis_lp_rb[port_idx],
                                (cmis_st[port_idx] == CMIS_ST_FLT),
                                (cmis_st[port_idx] == CMIS_ST_RDY),
@@ -391,6 +402,8 @@ module fc128_bridge_top #(
                                cmis_f1[port_idx], cmis_f0[port_idx]};
             3'd4: rdata_mux = {29'h0, cmis_armed[port_idx], cmis_tx_rb[port_idx],
                                cmis_lp_rb[port_idx]};
+            3'd5: rdata_mux = {26'h0, cmis_dp_act[port_idx], cmis_dp_rb[port_idx],
+                               cmis_dp_st[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end
