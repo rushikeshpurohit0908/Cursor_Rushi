@@ -86,8 +86,8 @@ module fc_port #(
   logic [1:0]  sys_lock_sync;
   logic [1:0][1:0]  sys_front_sync;
   logic [1:0][63:0] sys_front_data;
-  logic [7:0]  client_tx_os;
-  logic [7:0]  system_tx_os;
+  logic [31:0] client_tx_os;
+  logic [31:0] system_tx_os;
 
   // System block lock is produced on clk_system. The return pipe and the
   // system link machine both sit on clk_client.

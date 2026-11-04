@@ -1,7 +1,7 @@
 // Link initialization for one FC128 bridge link.
 //
-// Ordered-set bytes are the internal coding in fc128_defs.vh, not an FC-FS
-// 8b/10b or 64b/66b map. Bring-up follows the usual FC port sequence
+// Ordered sets are the FC-FS words in fc128_defs.vh (first character in [7:0]).
+// Bring-up follows the usual FC port sequence
 // (OLS -> LR -> LRR -> Idle -> Active). A peer that is already sending Idle
 // also reaches Active, so a testbench that only sources Idle still links up.
 //
@@ -19,16 +19,16 @@ module fc_link_sm #(
   input  logic [1:0]  rx_sync,
   input  logic [63:0] rx_data,
   output logic        link_up,
-  output logic [7:0]  tx_os,
+  output logic [31:0] tx_os,
   output logic [2:0]  state_code
 );
   `include "fc128_defs.vh"
 
-  logic [2:0] st;
-  logic [7:0] streak;
-  logic [7:0] streak_os;
+  logic [2:0]  st;
+  logic [7:0]  streak;
+  logic [31:0] streak_os;
 
-  function automatic [2:0] advance(input [2:0] cur, input [7:0] os);
+  function automatic [2:0] advance(input [2:0] cur, input [31:0] os);
     begin
       advance = cur;
       if (os == FC_IDLE) begin
@@ -52,7 +52,7 @@ module fc_link_sm #(
   endfunction
 
   // 1 when this primitive is left over from a state we have already left.
-  function automatic logic ignore_os(input [2:0] cur, input [7:0] os);
+  function automatic logic ignore_os(input [2:0] cur, input [31:0] os);
     begin
       ignore_os = 1'b0;
       if (os == FC_OLS && (cur == FC_LS_LR || cur == FC_LS_LRR || cur == FC_LS_ACQ))
@@ -66,7 +66,7 @@ module fc_link_sm #(
     end
   endfunction
 
-  function automatic logic is_prim(input [7:0] os);
+  function automatic logic is_prim(input [31:0] os);
     begin
       is_prim = (os == FC_IDLE) || (os == FC_OLS) || (os == FC_LR) || (os == FC_LRR);
     end
@@ -85,8 +85,8 @@ module fc_link_sm #(
     endcase
   end
 
-  wire       ctrl_os = rx_fire && (rx_sync == FC_SYNC_CTRL);
-  wire [7:0] os_b    = rx_data[7:0];
+  wire        ctrl_os = rx_fire && (rx_sync == FC_SYNC_CTRL);
+  wire [31:0] os_b    = rx_data[31:0];
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin

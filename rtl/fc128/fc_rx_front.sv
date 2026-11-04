@@ -42,7 +42,7 @@ module fc_rx_front #(
   always_comb begin
       if (warm_cnt < WARMUP) begin
       sync_out = FC_SYNC_CTRL;
-      data_out = {56'h0, FC_IDLE};
+      data_out = {32'h0, FC_IDLE};
     end else begin
       sync_out = sync_in;
       data_out = descrambled;

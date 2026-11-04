@@ -104,7 +104,7 @@ module tb_fc128_bridge;
             q_rd <= (q_rd + 1) % 64;
           end else begin
             plain_sync[pi] <= FC_SYNC_CTRL;
-            plain_data[pi] <= {56'h0, FC_IDLE};
+            plain_data[pi] <= {32'h0, FC_IDLE};
           end
         end
       end
@@ -133,9 +133,9 @@ module tb_fc128_bridge;
       for (p = 0; p < 8; p = p + 1) begin
         if (client_tx_valid[p] && client_tx_ready[p]) begin
           d = mon_dout[p];
-          if (client_tx_sync[p] == FC_SYNC_CTRL && d[7:0] == FC_SOF && pst[p] == 0) begin
-            pk[p]    <= d[23:16];
-            pneed[p] <= mon_fec ? (d[23:16] + 16) : d[23:16];
+          if (client_tx_sync[p] == FC_SYNC_CTRL && fc_is_sof(d[31:0]) && pst[p] == 0) begin
+            pk[p]    <= d[39:32];
+            pneed[p] <= mon_fec ? (d[39:32] + 16) : d[39:32];
             pidx[p]  <= 0;
             pst[p]   <= 1;
           end else if (pst[p] == 1 && client_tx_sync[p] == FC_SYNC_DATA) begin
@@ -146,7 +146,8 @@ module tb_fc128_bridge;
             n = pidx[p] + 8;
             if (n > pneed[p]) n = pneed[p];
             pidx[p] <= n;
-          end else if (pst[p] == 1 && client_tx_sync[p] == FC_SYNC_CTRL && d[7:0] == FC_EOF) begin
+          end else if (pst[p] == 1 && client_tx_sync[p] == FC_SYNC_CTRL &&
+                       fc_is_eof_good(d[31:0])) begin
             if (pidx[p] == pneed[p]) begin
               cap_k <= pk[p];
               cap_n <= pneed[p];
@@ -156,7 +157,7 @@ module tb_fc128_bridge;
               cap_count <= cap_count + 1;
             end
             pst[p] <= 0;
-          end else if (client_tx_sync[p] == FC_SYNC_CTRL && d[7:0] == FC_RRDY) begin
+          end else if (client_tx_sync[p] == FC_SYNC_CTRL && d[31:0] == FC_RRDY) begin
             rrdy_count <= rrdy_count + 1;
           end
         end
@@ -215,7 +216,13 @@ module tb_fc128_bridge;
     end
   endtask
 
-  task automatic send_pay(input integer port, input integer k, input integer bad);
+  task automatic send_pay(
+    input integer port,
+    input integer k,
+    input integer bad,
+    input [31:0] sof,
+    input [31:0] eof
+  );
     integer nwire, n, b;
     reg [63:0] blk;
     reg [31:0] c;
@@ -227,7 +234,7 @@ module tb_fc128_bridge;
         c = crc32_update(c, pay[n]);
       c = ~c;
       if (bad) c = c ^ 32'h00FF_00FF;
-      push_blk(FC_SYNC_CTRL, {32'h0, 8'h00, k[7:0], 8'h00, FC_SOF});
+      push_blk(FC_SYNC_CTRL, {16'h0, 8'h00, k[7:0], sof});
       n = 0;
       while (n < nwire) begin
         blk = 64'h0;
@@ -242,7 +249,7 @@ module tb_fc128_bridge;
         push_blk(FC_SYNC_DATA, blk);
         n = n + 8;
       end
-      push_blk(FC_SYNC_CTRL, {c, 24'h0, FC_EOF});
+      push_blk(FC_SYNC_CTRL, {c, eof});
     end
   endtask
 
@@ -313,6 +320,7 @@ module tb_fc128_bridge;
   endtask
 
   reg [31:0] rdw;
+  reg [31:0] crc_snap;
   integer prev;
   integer bi;
   reg [7:0] CW [0:23];
@@ -359,16 +367,40 @@ module tb_fc128_bridge;
 
     prev = cap_count;
     for (bi = 0; bi < 16; bi = bi + 1) pay[bi] = bi[7:0];
-    send_pay(0, 16, 0);
+    send_pay(0, 16, 0, FC_SOF, FC_EOF);
     wait_cap(0, prev, 4000);
     expect_bytes(16);
+
+    // SOFn3 with the positive-disparity EOFn is a legal Class 3 continuation.
+    prev = cap_count;
+    for (bi = 0; bi < 8; bi = bi + 1) pay[bi] = 8'h20 + bi[7:0];
+    send_pay(0, 8, 0, FC_SOFN3, FC_EOFN_P);
+    wait_cap(0, prev, 4000);
+    expect_bytes(8);
+
+    // EOFa aborts the frame. Credit is still returned, and the payload is not.
+    csr_read_t(12'h108, rdw);
+    crc_snap = rdw;
+    prev = cap_count;
+    for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'hEE;
+    send_pay(0, 4, 0, FC_SOF, FC_EOFA);
+    repeat (1500) @(posedge clk_client);
+    if (cap_count != prev) begin
+      $display("FAIL EOFa frame was forwarded");
+      errors = errors + 1;
+    end
+    csr_read_t(12'h108, rdw);
+    if (rdw <= crc_snap) begin
+      $display("FAIL EOFa did not count as a drop (%h)", rdw);
+      errors = errors + 1;
+    end
 
     // Bad CRC is dropped. The following good frame is the one that returns.
     prev = cap_count;
     for (bi = 0; bi < 8; bi = bi + 1) pay[bi] = 8'hC0 + bi[7:0];
-    send_pay(0, 8, 1);
+    send_pay(0, 8, 1, FC_SOF, FC_EOF);
     for (bi = 0; bi < 8; bi = bi + 1) pay[bi] = 8'h40 + bi[7:0];
-    send_pay(0, 8, 0);
+    send_pay(0, 8, 0, FC_SOF, FC_EOF);
     wait_cap(0, prev, 4000);
     expect_bytes(8);
     csr_read_t(12'h108, rdw);
@@ -391,7 +423,7 @@ module tb_fc128_bridge;
     end
     prev = cap_count;
     for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'h90 + bi[7:0];
-    send_pay(0, 4, 0);
+    send_pay(0, 4, 0, FC_SOF, FC_EOF);
     repeat (1500) @(posedge clk_client);
     if (cap_count != prev) begin
       $display("FAIL frame crossed with system credit 0");
@@ -409,7 +441,7 @@ module tb_fc128_bridge;
     prev = cap_count;
     for (bi = 0; bi < 24; bi = bi + 1) pay[bi] = CW[bi];
     fec_corrupt = 1;
-    send_pay(0, 8, 0);
+    send_pay(0, 8, 0, FC_SOF, FC_EOF);
     fec_corrupt = 0;
     wait_cap(0, prev, 8000);
     for (bi = 0; bi < 8; bi = bi + 1) pay[bi] = CW[bi];
@@ -426,17 +458,17 @@ module tb_fc128_bridge;
     repeat (20) @(posedge clk_client);
     prev = cap_count;
     pay[0] = 8'hAB; pay[1] = 8'hCD; pay[2] = 8'hEF;
-    send_pay(7, 3, 0);
+    send_pay(7, 3, 0, FC_SOF, FC_EOF);
     wait_cap(7, prev, 4000);
     expect_bytes(3);
 
     // NOS drops the client link. The frame that follows is discarded, and a
     // later frame is delivered once Idle has brought the link back.
     prev = cap_count;
-    push_blk(FC_SYNC_CTRL, {56'h0, FC_NOS});
-    push_blk(FC_SYNC_CTRL, {56'h0, FC_NOS});
+    push_blk(FC_SYNC_CTRL, {32'h0, FC_NOS});
+    push_blk(FC_SYNC_CTRL, {32'h0, FC_NOS});
     for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'hD0 + bi[7:0];
-    send_pay(0, 4, 0);
+    send_pay(0, 4, 0, FC_SOF, FC_EOF);
     repeat (1500) @(posedge clk_client);
     if (cap_count != prev) begin
       $display("FAIL frame accepted while client link down");
@@ -445,7 +477,7 @@ module tb_fc128_bridge;
     wait_links(8'hFF, 4000);
     prev = cap_count;
     for (bi = 0; bi < 4; bi = bi + 1) pay[bi] = 8'hD0 + bi[7:0];
-    send_pay(0, 4, 0);
+    send_pay(0, 4, 0, FC_SOF, FC_EOF);
     wait_cap(0, prev, 4000);
     expect_bytes(4);
 

@@ -13,7 +13,7 @@ module tb_fc_link;
   logic [1:0]  rx_sync = 0;
   logic [63:0] rx_data = 0;
   logic        link_up;
-  logic [7:0]  tx_os;
+  logic [31:0] tx_os;
   logic [2:0]  state_code;
 
   fc_link_sm #(.STREAK(4)) dut (
@@ -26,7 +26,7 @@ module tb_fc_link;
 
   task automatic check_ls;
     input [2:0] st;
-    input [7:0] os;
+    input [31:0] os;
     input up;
     input [255:0] tag;
     begin
@@ -38,11 +38,11 @@ module tb_fc_link;
     end
   endtask
 
-  task automatic fire(input [7:0] os);
+  task automatic fire(input [31:0] os);
     begin
       @(posedge clk);
       rx_sync <= FC_SYNC_CTRL;
-      rx_data <= {56'h0, os};
+      rx_data <= {32'h0, os};
       rx_fire <= 1'b1;
       @(posedge clk);
       @(negedge clk);
@@ -62,7 +62,7 @@ module tb_fc_link;
     end
   endtask
 
-  task automatic fires(input [7:0] os, input integer n);
+  task automatic fires(input [31:0] os, input integer n);
     integer k;
     begin
       for (k = 0; k < n; k = k + 1)
@@ -70,7 +70,36 @@ module tb_fc_link;
     end
   endtask
 
+  task automatic check_word;
+    input [31:0] got;
+    input [31:0] exp;
+    input [255:0] tag;
+    begin
+      if (got !== exp) begin
+        $display("FAIL %0s word %h exp %h", tag, got, exp);
+        errors = errors + 1;
+      end
+    end
+  endtask
+
   initial begin
+    check_word(FC_IDLE, 32'hB5B595BC, "IDLE");
+    check_word(FC_RRDY, 32'h4A4A95BC, "R_RDY");
+    check_word(FC_NOS,  32'h45BF55BC, "NOS");
+    check_word(FC_OLS,  32'h558A35BC, "OLS");
+    check_word(FC_LR,   32'h49BF49BC, "LR");
+    check_word(FC_LRR,  32'h49BF35BC, "LRR");
+    check_word(FC_SOF,  32'h5656B5BC, "SOFi3");
+    check_word(FC_EOF,  32'h757595BC, "EOFt");
+    check_word(FC_EOFN, 32'hD5D595BC, "EOFn");
+    if (!fc_is_sof(FC_SOFN3) || !fc_is_sof(FC_SOFF) || fc_is_sof(FC_EOFDT_P) ||
+        !fc_is_eof_good(FC_EOFN_P) || !fc_is_eof_good(FC_EOFT_P) ||
+        !fc_is_eof_bad(FC_EOFA) || !fc_is_eof_bad(FC_EOFNI_P) ||
+        fc_is_eof_good(FC_IDLE) || fc_is_eof_bad(FC_RRDY)) begin
+      $display("FAIL ordered-set classify");
+      errors = errors + 1;
+    end
+
     repeat (3) @(posedge clk);
     @(negedge clk);
     rst_n = 1;

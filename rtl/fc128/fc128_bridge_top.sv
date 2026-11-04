@@ -7,8 +7,9 @@
 //
 // The block coding, ordered sets, and RS(255,239) FEC are the PoC mapping of
 // the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox, link
-// init). FC-PI-8 production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec
-// is the replacement point. Ordered-set bytes are documented in fc128_defs.vh.
+// init). Control blocks carry the FC-FS ordered set in [31:0]. FC-PI-8
+// production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec is the
+// replacement point. Ordered sets are documented in fc128_defs.vh.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,

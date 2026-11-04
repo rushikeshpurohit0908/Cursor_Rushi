@@ -3,7 +3,8 @@
 // them between the client link and the system link.
 //
 // rx_link_up gates frame accept on this pipe's ingress. tx_link_up gates
-// frame and R_RDY transmit; until then the pipe sources tx_os (NOS/OLS/LR/LRR/Idle).
+// frame and R_RDY transmit; until then the pipe sources tx_os (the FC-FS
+// primitive for NOS/OLS/LR/LRR/Idle).
 module fc_pipe #(
   parameter int MAX_PAY = 128
 ) (
@@ -14,7 +15,7 @@ module fc_pipe #(
   input  logic        locked,
   input  logic        rx_link_up,
   input  logic        tx_link_up,
-  input  logic [7:0]  tx_os,
+  input  logic [31:0] tx_os,
 
   input  logic        rx_valid,
   output logic        rx_ready,
@@ -157,7 +158,7 @@ module fc_pipe #(
       tx_state        <= TS_FLOW;
       tx_valid        <= 1'b0;
       tx_sync         <= FC_SYNC_CTRL;
-      tx_data         <= {56'h0, FC_IDLE};
+      tx_data         <= {32'h0, FC_IDLE};
       pending         <= 1'b0;
       in_frame        <= 1'b0;
       enc_done        <= 1'b0;
@@ -219,17 +220,17 @@ module fc_pipe #(
         case (rx_state)
           RX_IDLE: begin
             if (rx_valid && rx_ready && locked && !pending) begin
-              if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_SOF && rx_link_up) begin
-                if (rx_data[31:16] >= 16'd1 && rx_data[31:16] <= MAX_PAY) begin
-                  k_len    <= rx_data[23:16];
+              if (rx_sync == FC_SYNC_CTRL && fc_is_sof(rx_data[31:0]) && rx_link_up) begin
+                if (rx_data[47:32] >= 16'd1 && rx_data[47:32] <= MAX_PAY) begin
+                  k_len    <= rx_data[39:32];
                   use_fec  <= fec_en;
-                  wire_len <= fec_en ? (rx_data[23:16] + 8'd16) : rx_data[23:16];
+                  wire_len <= fec_en ? (rx_data[39:32] + 8'd16) : rx_data[39:32];
                   idx      <= 8'h00;
                   rx_state <= RX_FRM;
                 end else begin
                   rx_state <= RX_DROP;
                 end
-              end else if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_RRDY && rx_link_up) begin
+              end else if (rx_sync == FC_SYNC_CTRL && rx_data[31:0] == FC_RRDY && rx_link_up) begin
                 saw_r_rdy <= 1'b1;
               end
             end
@@ -241,7 +242,11 @@ module fc_pipe #(
                 lat_data <= rx_data;
                 lat_i    <= 4'h0;
                 rx_state <= RX_BYTE;
-              end else if (rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_EOF) begin
+              end else if (rx_sync == FC_SYNC_CTRL && fc_is_eof_bad(rx_data[31:0])) begin
+                stat_crc_err   <= stat_crc_err + 32'd1;
+                frame_accepted <= 1'b1;
+                rx_state       <= RX_IDLE;
+              end else if (rx_sync == FC_SYNC_CTRL && fc_is_eof_good(rx_data[31:0])) begin
                 eof_crc <= rx_data[63:32];
                 if (idx != wire_len) begin
                   stat_crc_err   <= stat_crc_err + 32'd1;
@@ -270,8 +275,8 @@ module fc_pipe #(
           end
 
           RX_DROP: begin
-            if (rx_valid && rx_ready &&
-                rx_sync == FC_SYNC_CTRL && rx_data[7:0] == FC_EOF) begin
+            if (rx_valid && rx_ready && rx_sync == FC_SYNC_CTRL &&
+                (fc_is_eof_good(rx_data[31:0]) || fc_is_eof_bad(rx_data[31:0]))) begin
               stat_crc_err   <= stat_crc_err + 32'd1;
               frame_accepted <= 1'b1;
               rx_state       <= RX_IDLE;
@@ -336,24 +341,24 @@ module fc_pipe #(
               if (!tx_link_up && !in_frame) begin
                 tx_valid <= 1'b1;
                 tx_sync  <= FC_SYNC_CTRL;
-                tx_data  <= {56'h0, tx_os};
+                tx_data  <= {32'h0, tx_os};
                 tx_state <= TS_FLOW;
               end else if (owed_v != 8'h00 && !in_frame) begin
                 tx_valid  <= 1'b1;
                 tx_sync   <= FC_SYNC_CTRL;
-                tx_data   <= {56'h0, FC_RRDY};
+                tx_data   <= {32'h0, FC_RRDY};
                 tx_state  <= TS_RRDY;
                 send_rrdy  = 1'b1;
               end else if (pending && enc_done && credit_ok && !in_frame) begin
                 tx_valid  <= 1'b1;
                 tx_sync   <= FC_SYNC_CTRL;
-                tx_data   <= {32'h0, 8'h00, pend_len, 8'h00, FC_SOF};
+                tx_data   <= {16'h0, 8'h00, pend_len, FC_SOF};
                 tx_state  <= TS_SOF;
                 in_frame  <= 1'b1;
               end else begin
                 tx_valid <= 1'b1;
                 tx_sync  <= FC_SYNC_CTRL;
-                tx_data  <= {56'h0, FC_IDLE};
+                tx_data  <= {32'h0, FC_IDLE};
               end
             end
           end
@@ -361,7 +366,7 @@ module fc_pipe #(
           TS_RRDY: begin
             tx_valid <= 1'b1;
             tx_sync  <= FC_SYNC_CTRL;
-            tx_data  <= {56'h0, FC_RRDY};
+            tx_data  <= {32'h0, FC_RRDY};
             if (tx_fire)
               tx_state <= TS_FLOW;
           end
@@ -369,7 +374,7 @@ module fc_pipe #(
           TS_SOF: begin
             tx_valid <= 1'b1;
             tx_sync  <= FC_SYNC_CTRL;
-            tx_data  <= {32'h0, 8'h00, pend_len, 8'h00, FC_SOF};
+            tx_data  <= {16'h0, 8'h00, pend_len, FC_SOF};
             if (tx_fire) begin
               credit_take <= 1'b1;
               tx_state    <= TS_PACK;
@@ -403,7 +408,7 @@ module fc_pipe #(
                 tx_state <= TS_EOF;
                 tx_valid <= 1'b1;
                 tx_sync  <= FC_SYNC_CTRL;
-                tx_data  <= {pend_crc, 24'h0, FC_EOF};
+                tx_data  <= {pend_crc, FC_EOF};
               end else begin
                 tx_state <= TS_PACK;
                 pack     <= 64'h0;
@@ -416,7 +421,7 @@ module fc_pipe #(
           TS_EOF: begin
             tx_valid <= 1'b1;
             tx_sync  <= FC_SYNC_CTRL;
-            tx_data  <= {pend_crc, 24'h0, FC_EOF};
+            tx_data  <= {pend_crc, FC_EOF};
             if (tx_fire) begin
               pending        <= 1'b0;
               in_frame       <= 1'b0;
@@ -424,7 +429,7 @@ module fc_pipe #(
               tx_state       <= TS_FLOW;
               tx_valid       <= 1'b1;
               tx_sync        <= FC_SYNC_CTRL;
-              tx_data        <= {56'h0, FC_IDLE};
+              tx_data        <= {32'h0, FC_IDLE};
             end
           end
 
