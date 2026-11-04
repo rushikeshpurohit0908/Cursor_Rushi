@@ -31,6 +31,18 @@ module tb_fc128_bridge;
   logic [7:0] sec_tx_valid;
   logic [7:0][1:0]  sec_tx_sync;
   logic [7:0][63:0] sec_tx_data;
+  logic [7:0] cmis_scl_oe, cmis_sda_oe, cmis_scl_i, cmis_sda_i;
+  logic [7:0] cmis_modprs_n, cmis_int_n, cmis_lpmode, cmis_reset_n;
+  logic cmis_sda_s;
+  logic [15:0] cmis_temp = 16'h2880;
+  logic [15:0] cmis_vcc = 16'h80E8;
+
+  assign cmis_scl_i[0] = ~cmis_scl_oe[0];
+  assign cmis_sda_i[0] = ~(cmis_sda_oe[0] | cmis_sda_s);
+  assign cmis_scl_i[7:1] = 7'h7F;
+  assign cmis_sda_i[7:1] = 7'h7F;
+  assign cmis_modprs_n = 8'hFE;
+  assign cmis_int_n = 8'hFF;
 
   fc128_bridge_top dut (
     .clk_client(clk_client), .clk_system(clk_system),
@@ -45,7 +57,19 @@ module tb_fc128_bridge;
     .sys_tx_sync(sys_tx_sync), .sys_tx_data(sys_tx_data),
     .sys_rx_valid(sys_rx_valid), .sys_rx_ready(sys_rx_ready),
     .sys_rx_sync(sys_rx_sync), .sys_rx_data(sys_rx_data),
-    .sec_tx_valid(sec_tx_valid), .sec_tx_sync(sec_tx_sync), .sec_tx_data(sec_tx_data)
+    .sec_tx_valid(sec_tx_valid), .sec_tx_sync(sec_tx_sync), .sec_tx_data(sec_tx_data),
+    .cmis_scl_oe(cmis_scl_oe), .cmis_sda_oe(cmis_sda_oe),
+    .cmis_scl_i(cmis_scl_i), .cmis_sda_i(cmis_sda_i),
+    .cmis_modprs_n(cmis_modprs_n), .cmis_int_n(cmis_int_n),
+    .cmis_lpmode(cmis_lpmode), .cmis_reset_n(cmis_reset_n)
+  );
+
+  cmis_sfp_slave #(.PWR_DLY(20), .TXDIS_INIT(8'hA0)) u_sfp (
+    .clk(clk_client), .rst_n(rst_client_n),
+    .scl_i(cmis_scl_i[0]), .sda_i(cmis_sda_i[0]), .sda_oe(cmis_sda_s),
+    .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
+    .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
+    .mod_state(), .txdis_byte(), .flag_state()
   );
 
   logic        drive_en = 0;
@@ -365,6 +389,21 @@ module tb_fc128_bridge;
       $display("FAIL id %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h200, rdw);
+    if (rdw !== 32'h0000_0020) begin
+      $display("FAIL cmis ctrl %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h204, rdw);
+    if (rdw !== 32'h0188_0000) begin
+      $display("FAIL cmis status %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h224, rdw);
+    if (rdw !== 32'h0108_0000) begin
+      $display("FAIL cmis port1 %h", rdw);
+      errors = errors + 1;
+    end
     csr_write_t(12'h014, 32'hA5A5_1234);
     csr_read_t(12'h014, rdw);
     if (rdw !== 32'hA5A5_1234) begin
@@ -566,6 +605,37 @@ module tb_fc128_bridge;
     repeat (40) @(posedge clk_system);
     if (sec_tx_valid != 8'h00) begin
       $display("FAIL secondary squelch %h", sec_tx_valid);
+      errors = errors + 1;
+    end
+
+    // Port 0 cage: poll the SFP112, then request low power.
+    csr_write_t(12'h200, 32'h0000_0021);
+    begin : cmis_up
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h204, rdw);
+        if (rdw[20] && rdw[18:16] == 3'd3 && rdw[7:0] == 8'h20 && rdw[15:8] == 8'h50)
+          disable cmis_up;
+      end
+      $display("FAIL cmis ready %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h208, rdw);
+    if (rdw !== 32'h80E8_2880) begin
+      $display("FAIL cmis monitors %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_0023);
+    begin : cmis_lp
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h204, rdw);
+        if (rdw[20] && rdw[18:16] == 3'd1 && rdw[27])
+          disable cmis_lp;
+      end
+      $display("FAIL cmis low power %h", rdw);
       errors = errors + 1;
     end
 
