@@ -27,9 +27,16 @@
 //     opt_mask. Bits [7:1] of those bytes are left as the module set them.
 //   * read-modify-write lower byte 32 so the module temperature and
 //     supply masks follow mod_mask. The whole byte is those eight masks.
+//   * read-modify-write lower byte 33 so the Aux1/Aux2 masks follow
+//     aux_mask. That write stays after byte 32 and before the armed
+//     status pass. The whole byte is those eight masks.
+//   * on the armed status pass, after the optical monitors, read lower
+//     bytes 18-21 (Aux1 laser temperature, Aux2 TEC current). The first
+//     page 11h pass does not take this read.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply. Byte 9 is the temperature
-//     and supply threshold flags. That read is unchanged.
+//     and supply threshold flags. Byte 10 is the Aux1/Aux2 threshold
+//     flags. That read is unchanged.
 //
 // LPMode and ResetL are cage pins driven by the bridge CSR, not by this
 // state machine. A NACK, or ModPrsL high, drops present and the next poll
@@ -58,6 +65,9 @@ module fc_cmis_host #(
   // Byte 9 / byte 32: {Temp HA, Temp LA, Temp HW, Temp LW,
   // Vcc HA, Vcc LA, Vcc HW, Vcc LW}. A 1 masks that flag off IntL.
   input  logic [7:0]  mod_mask,
+  // Byte 10 / byte 33: {Aux1 HA, Aux1 LA, Aux1 HW, Aux1 LW,
+  // Aux2 HA, Aux2 LA, Aux2 HW, Aux2 LW}. A 1 masks that flag off IntL.
+  input  logic [7:0]  aux_mask,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -78,6 +88,8 @@ module fc_cmis_host #(
   output logic [7:0]  flag3,
   output logic [15:0] temp_s16,
   output logic [15:0] vcc_u16,
+  output logic [15:0] aux1_s16,
+  output logic [15:0] aux2_s16,
   output logic [3:0]  dp_state,
   output logic        rx_status,
   output logic        tx_status,
@@ -132,6 +144,9 @@ module fc_cmis_host #(
   localparam [4:0] OP_WROM  = 5'd25;
   localparam [4:0] OP_RDMM  = 5'd26;
   localparam [4:0] OP_WRMM  = 5'd27;
+  localparam [4:0] OP_RDAM  = 5'd28;
+  localparam [4:0] OP_WRAM  = 5'd29;
+  localparam [4:0] OP_RDAUX = 5'd30;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -150,6 +165,8 @@ module fc_cmis_host #(
   logic [3:0]  omask_i;
   logic        mmask_ok;
   logic [7:0]  mmask_rb;
+  logic        amask_ok;
+  logic [7:0]  amask_rb;
   logic [7:0]  opt_lo;
   logic [15:0] gapcnt;
 
@@ -261,6 +278,8 @@ module fc_cmis_host #(
       omask_i   <= 4'd0;
       mmask_ok  <= 1'b0;
       mmask_rb  <= 8'h00;
+      amask_ok  <= 1'b0;
+      amask_rb  <= 8'h00;
       opt_lo    <= 8'h00;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
@@ -281,6 +300,8 @@ module fc_cmis_host #(
       flag3 <= 8'h00;
       temp_s16 <= 16'h0000;
       vcc_u16  <= 16'h0000;
+      aux1_s16 <= 16'h0000;
+      aux2_s16 <= 16'h0000;
       dp_state <= 4'h0;
       rx_status <= 1'b0;
       tx_status <= 1'b0;
@@ -327,11 +348,14 @@ module fc_cmis_host #(
           mask_arm  <= 1'b0;
           omask_ok  <= 1'b0;
           mmask_ok  <= 1'b0;
+          amask_ok  <= 1'b0;
           lane_valid <= 1'b0;
           opt_tx_u16  <= 16'h0000;
           bias_tx_u16 <= 16'h0000;
           opt_rx_u16  <= 16'h0000;
           opt_flags   <= 12'h000;
+          aux1_s16    <= 16'h0000;
+          aux2_s16    <= 16'h0000;
           wait_gap  <= 1'b1;
           gapcnt    <= GAPW[15:0];
         end else begin
@@ -535,6 +559,17 @@ module fc_cmis_host #(
               // Bytes 149-152: {Rx LW, Rx HW, Rx LA, Rx HA} over the
               // Tx-power and bias flags captured with bytes 128-148.
               opt_flags  <= {cap[3][0], cap[2][0], cap[1][0], cap[0][0], opt_lo};
+              // Lower bytes 18-21. Not part of the bytes 0-17 poll, and
+              // not part of the first page 11h pass.
+              op         <= OP_RDAUX;
+              cmd_write  <= 1'b0;
+              cmd_addr   <= CMIS_AUX1;
+              cmd_rlen   <= 6'd4;
+              launch     <= 1'b1;
+            end
+            OP_RDAUX: begin
+              aux1_s16   <= {cap[0], cap[1]};
+              aux2_s16   <= {cap[2], cap[3]};
               lane_valid <= 1'b1;
               lane_ok    <= 1'b1;
             end
@@ -625,6 +660,23 @@ module fc_cmis_host #(
               mmask_rb <= mod_mask;
               mmask_ok <= 1'b1;
             end
+            OP_RDAM: begin
+              if (cap[0] == aux_mask) begin
+                amask_rb <= aux_mask;
+                amask_ok <= 1'b1;
+              end else begin
+                op        <= OP_WRAM;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_AUXMSK;
+                cmd_wdata <= aux_mask;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_WRAM: begin
+              amask_rb <= aux_mask;
+              amask_ok <= 1'b1;
+            end
             OP_POLL: begin
               ident          <= cap[0];
               rev            <= cap[1];
@@ -661,11 +713,14 @@ module fc_cmis_host #(
             mask_arm   <= 1'b0;
             omask_ok   <= 1'b0;
             mmask_ok   <= 1'b0;
+            amask_ok   <= 1'b0;
             lane_valid <= 1'b0;
             opt_tx_u16  <= 16'h0000;
             bias_tx_u16 <= 16'h0000;
             opt_rx_u16  <= 16'h0000;
             opt_flags   <= 12'h000;
+            aux1_s16    <= 16'h0000;
+            aux2_s16    <= 16'h0000;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -743,6 +798,14 @@ module fc_cmis_host #(
           op        <= OP_RDMM;
           cmd_write <= 1'b0;
           cmd_addr  <= CMIS_MONMSK;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (mask_arm && (!amask_ok || (aux_mask != amask_rb))) begin
+          // Lower byte 33 follows byte 32. The bytes 0-17 poll is
+          // unchanged, and this still runs only after the first poll.
+          op        <= OP_RDAM;
+          cmd_write <= 1'b0;
+          cmd_addr  <= CMIS_AUXMSK;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else if (!lane_ok) begin

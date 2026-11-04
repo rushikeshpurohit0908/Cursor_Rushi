@@ -21,6 +21,7 @@ module tb_fc_cmis;
   logic [4:0] lane_mask = 5'h1F;
   logic [11:0] opt_mask = 12'hFFF;
   logic [7:0] mod_mask = 8'hFF;
+  logic [7:0] aux_mask = 8'hFF;
   logic fail_tx = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -35,12 +36,14 @@ module tb_fc_cmis;
   logic [15:0] opt_tx = 16'd8000;
   logic [15:0] bias_tx = 16'd20000;
   logic [15:0] opt_rx = 16'd1000;
+  logic [15:0] aux1_s16 = 16'd12800;
+  logic [15:0] aux2_s16 = 16'd3277;
 
   logic busy, present, nack, armed, low_pwr_rb, tx_disable_rb, tx_squelch_rb, dp_deinit_rb;
   logic [7:0] ident, rev, flag0, flag1, flag2, flag3, txdis_byte, dpde_byte;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state;
-  logic [15:0] temp_rb, vcc_rb;
+  logic [15:0] temp_rb, vcc_rb, aux1_rb, aux2_rb;
   logic [3:0] dp_rb, dp_mod;
   logic rx_rb, tx_rb, dp_changed, dp_pending, lane_valid;
   logic [3:0] cfg_h, cfg_s;
@@ -63,6 +66,7 @@ module tb_fc_cmis;
     .flag_mask(lane_mask),
     .opt_mask(opt_mask),
     .mod_mask(mod_mask),
+    .aux_mask(aux_mask),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -72,6 +76,7 @@ module tb_fc_cmis;
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
     .temp_s16(temp_rb), .vcc_u16(vcc_rb),
+    .aux1_s16(aux1_rb), .aux2_s16(aux2_rb),
     .dp_state(dp_rb), .rx_status(rx_rb), .tx_status(tx_rb),
     .dp_changed(dp_changed), .dp_pending(dp_pending),
     .lane_valid(lane_valid),
@@ -94,6 +99,7 @@ module tb_fc_cmis;
     .los_rx(los_rx), .lol_rx(lol_rx),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
     .opt_tx_u16(opt_tx), .bias_tx_u16(bias_tx), .opt_rx_u16(opt_rx),
+    .aux1_s16(aux1_s16), .aux2_s16(aux2_s16),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .dpde_byte(dpde_byte),
     .dp_state(dp_mod), .rx_status(rx_mod), .tx_status(tx_mod),
     .flag_state(flag_state),
@@ -683,6 +689,131 @@ module tb_fc_cmis;
           disable mod_pulse;
       end
       $display("FAIL temp pulse saw %b flags %h temp %h", saw, flag1, temp_rb);
+      errors = errors + 1;
+    end
+
+    // 50 C and about +10% TEC current sit inside the Aux windows. Byte 33
+    // powers up at FF, so a later alarm stays off IntL until the mask opens.
+    // Flags are byte 10, already inside the bytes 0-17 poll.
+    begin : aux_quiet
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (aux1_rb == 16'd12800 && aux2_rb == 16'd3277 && flag2 == 8'h00 &&
+            flag1 == 8'h00 && int_n && mod.mem[CMIS_AUXMSK] == 8'hFF && !busy)
+          disable aux_quiet;
+      end
+      $display("FAIL aux quiet flags %h mask %h aux1 %h aux2 %h",
+               flag2, mod.mem[CMIS_AUXMSK], aux1_rb, aux2_rb);
+      errors = errors + 1;
+    end
+    // Equal to the laser-temperature high alarm is not a high alarm. It is
+    // still above the high-warning threshold.
+    aux1_s16 = CMIS_AUX1_HA;
+    begin : aux_eq
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (aux1_rb == CMIS_AUX1_HA && flag2 == 8'h20 && int_n && !busy)
+          disable aux_eq;
+      end
+      $display("FAIL aux1 equal HA flags %h aux1 %h", flag2, aux1_rb);
+      errors = errors + 1;
+    end
+    aux1_s16 = CMIS_AUX1_HA + 16'd1;
+    begin : aux_ha
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (aux1_rb == CMIS_AUX1_HA + 16'd1 && flag2 == 8'hA0 && int_n &&
+            mod.mem[CMIS_AUXMSK] == 8'hFF && !busy)
+          disable aux_ha;
+      end
+      $display("FAIL aux1 high alarm flags %h mask %h", flag2, mod.mem[CMIS_AUXMSK]);
+      errors = errors + 1;
+    end
+    // Unmask Aux1 high alarm only. The other seven mask bits stay 1.
+    aux_mask = 8'h7F;
+    begin : aux_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag2[7] && !flag2[6] && !int_n && !int_deasserted &&
+            mod.mem[CMIS_AUXMSK] == 8'h7F && !busy)
+          disable aux_int;
+      end
+      $display("FAIL aux1 alarm IntL flags %h int %b mask %h",
+               flag2, int_n, mod.mem[CMIS_AUXMSK]);
+      errors = errors + 1;
+    end
+    aux1_s16 = 16'd12800;
+    aux_mask = 8'hFF;
+    begin : aux_rest
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag2 == 8'h00 && aux1_rb == 16'd12800 && int_n && int_deasserted &&
+            mod.mem[CMIS_AUXMSK] == 8'hFF && !busy)
+          disable aux_rest;
+      end
+      $display("FAIL aux1 restore flags %h int %b mask %h",
+               flag2, int_n, mod.mem[CMIS_AUXMSK]);
+      errors = errors + 1;
+    end
+    // Equal to the TEC low-alarm threshold is not a low alarm. It is still
+    // below the low-warning threshold. The value is negative.
+    aux2_s16 = CMIS_AUX2_LA;
+    begin : aux_tec
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (aux2_rb == CMIS_AUX2_LA && flag2 == 8'h01 && int_n && !busy)
+          disable aux_tec;
+      end
+      $display("FAIL aux2 equal LA flags %h aux2 %h", flag2, aux2_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = CMIS_AUX2_LA - 16'd1;
+    begin : aux_tec_la
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (aux2_rb == CMIS_AUX2_LA - 16'd1 && flag2 == 8'h05 &&
+            !flag2[7] && !flag2[5] && !busy)
+          disable aux_tec_la;
+      end
+      $display("FAIL aux2 low alarm flags %h aux2 %h", flag2, aux2_rb);
+      errors = errors + 1;
+    end
+    aux2_s16 = 16'd3277;
+    begin : aux_tec_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag2 == 8'h00 && aux2_rb == 16'd3277 && !busy)
+          disable aux_tec_clr;
+      end
+      $display("FAIL aux2 restore flags %h", flag2);
+      errors = errors + 1;
+    end
+    // One step below -80% sets both TEC low flags. The same bits read as a
+    // large unsigned value, so an unsigned compare would raise a high
+    // alarm instead. The pulse is held until byte 10 is read.
+    aux2_s16 = CMIS_AUX2_LA - 16'd1;
+    repeat (30) @(posedge clk);
+    aux2_s16 = 16'd3277;
+    begin : aux_pulse
+      integer k;
+      reg saw;
+      saw = 0;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk);
+        if (flag2[2] && flag2[0] && !flag2[7] && !flag2[5])
+          saw = 1;
+        if (saw && flag2 == 8'h00 && aux2_rb == 16'd3277 && !busy)
+          disable aux_pulse;
+      end
+      $display("FAIL aux pulse saw %b flags %h aux2 %h", saw, flag2, aux2_rb);
       errors = errors + 1;
     end
 
