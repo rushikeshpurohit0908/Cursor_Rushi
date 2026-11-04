@@ -15,7 +15,11 @@
 // bit 0 is OutputStatusRx, byte 133 bit 0 is OutputStatusTx, and byte 134
 // bit 0 is DPStateChangedFlag (clear on read, steady states only).
 // Byte 202 bits [3:0] are ConfigStatus. Byte 206 is the active AppSel.
-// Byte 235 bit 0 is DPInitPending. Lanes in the map are numbered from 1.
+// Byte 235 bit 0 is DPInitPending. Bytes 135, 136, and 137 are the lane-1
+// FailureFlagTx, LOSFlagTx, and CDRLOLFlagTx latches. Bytes 147 and 148 are
+// LOSFlagRx and CDRLOLFlagRx. Each is clear-on-read. The matching mask bits
+// are page 10h bytes 214, 215, 216, 226, and 227, and a 1 masks that flag
+// out of the interrupt. Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
 // codes in Table 4-7: 128GFC-SM, 64GFC-SM, and 32GFC-SM.
@@ -40,8 +44,18 @@ localparam [7:0] CMIS_SCS0     = 8'd145;
 localparam [7:0] CMIS_OUTRX    = 8'd132;
 localparam [7:0] CMIS_OUTTX    = 8'd133;
 localparam [7:0] CMIS_DPFLAG   = 8'd134;
+localparam [7:0] CMIS_FAILTX   = 8'd135;
+localparam [7:0] CMIS_LOSTX    = 8'd136;
+localparam [7:0] CMIS_LOLTX    = 8'd137;
+localparam [7:0] CMIS_LOSRX    = 8'd147;
+localparam [7:0] CMIS_LOLRX    = 8'd148;
 localparam [7:0] CMIS_CFGSTAT  = 8'd202;
 localparam [7:0] CMIS_ACS0     = 8'd206;
+localparam [7:0] CMIS_MSK_FAIL = 8'd214;
+localparam [7:0] CMIS_MSK_LOSTX = 8'd215;
+localparam [7:0] CMIS_MSK_LOLTX = 8'd216;
+localparam [7:0] CMIS_MSK_LOSRX = 8'd226;
+localparam [7:0] CMIS_MSK_LOLRX = 8'd227;
 localparam [7:0] CMIS_DPPEND   = 8'd235;
 localparam [7:0] CMIS_APP_BASE = 8'd86;
 localparam [5:0] CMIS_POLL_N   = 6'd18;

@@ -42,7 +42,13 @@ module tb_fc128_bridge;
   assign cmis_scl_i[7:1] = 7'h7F;
   assign cmis_sda_i[7:1] = 7'h7F;
   assign cmis_modprs_n = 8'hFE;
-  assign cmis_int_n = 8'hFF;
+  logic sfp_los_tx = 0;
+  logic sfp_los_rx = 0;
+  logic sfp_tx_fail = 0;
+  logic sfp_lol_tx = 0;
+  logic sfp_lol_rx = 0;
+  logic sfp_int_n;
+  assign cmis_int_n = {7'h7F, sfp_int_n};
 
   fc128_bridge_top dut (
     .clk_client(clk_client), .clk_system(clk_system),
@@ -69,6 +75,8 @@ module tb_fc128_bridge;
     .scl_i(cmis_scl_i[0]), .sda_i(cmis_sda_i[0]), .sda_oe(cmis_sda_s),
     .lpmode(cmis_lpmode[0]), .reset_n(cmis_reset_n[0]), .force_fault(1'b0),
     .temp_s16(cmis_temp), .vcc_u16(cmis_vcc),
+    .tx_fail(sfp_tx_fail), .los_tx(sfp_los_tx), .lol_tx(sfp_lol_tx),
+    .los_rx(sfp_los_rx), .lol_rx(sfp_lol_rx), .int_n(sfp_int_n),
     .mod_state(), .txdis_byte(), .flag_state(),
     .dp_state(), .dpdeinit_byte()
   );
@@ -391,7 +399,7 @@ module tb_fc128_bridge;
       errors = errors + 1;
     end
     csr_read_t(12'h200, rdw);
-    if (rdw !== 32'h0000_0020) begin
+    if (rdw !== 32'h0000_3E20) begin
       $display("FAIL cmis ctrl %h", rdw);
       errors = errors + 1;
     end
@@ -663,7 +671,7 @@ module tb_fc128_bridge;
     end
 
     // Port 0 cage: poll the SFP112, then request low power.
-    csr_write_t(12'h200, 32'h0000_0021);
+    csr_write_t(12'h200, 32'h0000_3E21);
     begin : cmis_up
       integer k;
       for (k = 0; k < 400000; k = k + 1) begin
@@ -686,7 +694,7 @@ module tb_fc128_bridge;
       errors = errors + 1;
     end
     csr_write_t(12'h21C, 32'h0000_0030);
-    csr_write_t(12'h200, 32'h0000_00A1);
+    csr_write_t(12'h200, 32'h0000_3EA1);
     begin : cmis_app
       integer k;
       for (k = 0; k < 800000; k = k + 1) begin
@@ -701,7 +709,7 @@ module tb_fc128_bridge;
       $display("FAIL cmis apply %h", rdw);
       errors = errors + 1;
     end
-    csr_write_t(12'h200, 32'h0000_0121);
+    csr_write_t(12'h200, 32'h0000_3F21);
     begin : cmis_sq
       integer k;
       for (k = 0; k < 800000; k = k + 1) begin
@@ -713,7 +721,52 @@ module tb_fc128_bridge;
       $display("FAIL cmis squelch %h", rdw);
       errors = errors + 1;
     end
-    csr_write_t(12'h200, 32'h0000_0023);
+    sfp_los_rx = 1;
+    begin : cmis_los
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[14] && !rdw[12] && !rdw[11]) begin
+          csr_read_t(12'h204, rdw);
+          if (rdw[19] && rdw[24])
+            disable cmis_los;
+        end
+      end
+      $display("FAIL cmis los masked %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_2E21);
+    begin : cmis_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (rdw[14]) begin
+          csr_read_t(12'h204, rdw);
+          if (!rdw[19] && !rdw[24])
+            disable cmis_int;
+        end
+      end
+      $display("FAIL cmis los int %h", rdw);
+      errors = errors + 1;
+    end
+    sfp_los_rx = 0;
+    begin : cmis_los_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h214, rdw);
+        if (!rdw[14]) begin
+          csr_read_t(12'h204, rdw);
+          if (rdw[19] && rdw[24])
+            disable cmis_los_clr;
+        end
+      end
+      $display("FAIL cmis los clear %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h200, 32'h0000_3E23);
     begin : cmis_lp
       integer k;
       for (k = 0; k < 400000; k = k + 1) begin
