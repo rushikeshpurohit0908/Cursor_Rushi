@@ -23,6 +23,7 @@ module fc_port #(
   input  logic        scrambler_en,
   input  logic        scrambler_en_s,
   input  logic        xcode_en,
+  input  logic        rs544_en,
   input  logic        credit_load,
   input  logic [7:0]  credit_cli_i,
   input  logic [7:0]  credit_sys_i,
@@ -53,6 +54,8 @@ module fc_port #(
   output logic [31:0] stat_crc_err,
   output logic [31:0] stat_fec_corr,
   output logic [31:0] stat_fec_fail,
+  output logic [15:0] stat_rs544_corr,
+  output logic [15:0] stat_rs544_fail,
   output logic        client_link_up,
   output logic        system_link_up,
   output logic [2:0]  client_ls,
@@ -80,6 +83,19 @@ module fc_port #(
   logic        x_to_split_valid;
   logic [1:0]  x_to_split_sync;
   logic [63:0] x_to_split_data;
+  logic        rs_tx_ready;
+  logic        rs_to_split_valid;
+  logic [1:0]  rs_to_split_sync;
+  logic [63:0] rs_to_split_data;
+  logic        rs_rx_valid;
+  logic        rs_rx_ready;
+  logic [1:0]  rs_rx_sync;
+  logic [63:0] rs_rx_data;
+  logic        rs_corr_pulse;
+  logic        rs_fail_pulse;
+  logic [4:0]  rs_corr_nerr;
+  logic [15:0] rs544_corr;
+  logic [15:0] rs544_fail;
   logic        dec_valid;
   logic        dec_ready;
   logic [1:0]  dec_sync;
@@ -187,9 +203,25 @@ module fc_port #(
     .in_sync   (c_tx_to_split_sync),
     .in_data   (c_tx_to_split_data),
     .out_valid (x_to_split_valid),
-    .out_ready (split_ready),
+    .out_ready (rs_tx_ready),
     .out_sync  (x_to_split_sync),
     .out_data  (x_to_split_data)
+  );
+
+  // RS(544,514) rides the packed groups. It stays a wire unless the
+  // 256b/257b transcode is on, because the trailer framing assumes those beats.
+  fc_rs544_tx u_rs_tx (
+    .clk       (clk_client),
+    .rst_n     (rst_client_n),
+    .en        (rs544_en & xcode_en),
+    .in_valid  (x_to_split_valid),
+    .in_ready  (rs_tx_ready),
+    .in_sync   (x_to_split_sync),
+    .in_data   (x_to_split_data),
+    .out_valid (rs_to_split_valid),
+    .out_ready (split_ready),
+    .out_sync  (rs_to_split_sync),
+    .out_data  (rs_to_split_data)
   );
 
   fc_pair_split #(.DEPTH(FIFO_DEPTH)) u_split (
@@ -197,10 +229,10 @@ module fc_port #(
     .rst_wr_n (rst_client_n),
     .clk_rd   (clk_system),
     .rst_rd_n (rst_system_n),
-    .wr_valid (x_to_split_valid),
+    .wr_valid (rs_to_split_valid),
     .wr_ready (split_ready),
-    .wr_sync  (x_to_split_sync),
-    .wr_data  (x_to_split_data),
+    .wr_sync  (rs_to_split_sync),
+    .wr_data  (rs_to_split_data),
     .rd_valid (split_valid),
     .rd_ready (sys_tx_ready),
     .rd_sync  (split_sync),
@@ -257,14 +289,31 @@ module fc_port #(
     .rd_data  (merge_data)
   );
 
+  fc_rs544_rx u_rs_rx (
+    .clk        (clk_client),
+    .rst_n      (rst_client_n),
+    .en         (rs544_en & xcode_en),
+    .in_valid   (merge_valid),
+    .in_ready   (merge_ready),
+    .in_sync    (merge_sync),
+    .in_data    (merge_data),
+    .out_valid  (rs_rx_valid),
+    .out_ready  (rs_rx_ready),
+    .out_sync   (rs_rx_sync),
+    .out_data   (rs_rx_data),
+    .corr_pulse (rs_corr_pulse),
+    .corr_nerr  (rs_corr_nerr),
+    .fail_pulse (rs_fail_pulse)
+  );
+
   fc_xcode_rx u_xcode_rx (
     .clk       (clk_client),
     .rst_n     (rst_client_n),
     .en        (xcode_en),
-    .in_valid  (merge_valid),
-    .in_ready  (merge_ready),
-    .in_sync   (merge_sync),
-    .in_data   (merge_data),
+    .in_valid  (rs_rx_valid),
+    .in_ready  (rs_rx_ready),
+    .in_sync   (rs_rx_sync),
+    .in_data   (rs_rx_data),
     .out_valid (dec_valid),
     .out_ready (dec_ready),
     .out_sync  (dec_sync),
@@ -355,11 +404,29 @@ module fc_port #(
     end
   end
 
-  assign credit_cli     = cli_cr;
-  assign credit_sys     = sys_cr;
-  assign stat_rx_frames = c2s_rx;
-  assign stat_tx_frames = s2c_tx;
-  assign stat_crc_err   = c2s_crc + s2c_crc;
-  assign stat_fec_corr  = c2s_corr + s2c_corr;
-  assign stat_fec_fail  = c2s_fail + s2c_fail;
+  always_ff @(posedge clk_client or negedge rst_client_n) begin
+    if (!rst_client_n) begin
+      rs544_corr <= '0;
+      rs544_fail <= '0;
+    end else begin
+      if (rs_corr_pulse) begin
+        if ({1'b0, rs544_corr} + {12'h0, rs_corr_nerr} > 17'h0FFFF)
+          rs544_corr <= 16'hFFFF;
+        else
+          rs544_corr <= rs544_corr + {11'h0, rs_corr_nerr};
+      end
+      if (rs_fail_pulse && rs544_fail != 16'hFFFF)
+        rs544_fail <= rs544_fail + 16'd1;
+    end
+  end
+
+  assign credit_cli      = cli_cr;
+  assign credit_sys      = sys_cr;
+  assign stat_rx_frames  = c2s_rx;
+  assign stat_tx_frames  = s2c_tx;
+  assign stat_crc_err    = c2s_crc + s2c_crc;
+  assign stat_fec_corr   = c2s_corr + s2c_corr;
+  assign stat_fec_fail   = c2s_fail + s2c_fail;
+  assign stat_rs544_corr = rs544_corr;
+  assign stat_rs544_fail = rs544_fail;
 endmodule

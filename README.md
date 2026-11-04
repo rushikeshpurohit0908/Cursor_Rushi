@@ -32,7 +32,7 @@ python3 scripts/build_cisco_fc128_proposal.py
 
 `rtl/fc128/` is the synthesizable bridge behind the proposal diagram. Hardened F-Tile PMA stays outside the RTL. Each client port is one 112.2G lane gearboxed onto two 58G system lanes (116G aggregate, about 3.3% above the line rate). The extra 8×58G bank mirrors the even lane of each pair in protect mode, or squelches.
 
-The pipeline on each port is block lock, a self-synchronizing x^58+x^39+1 scrambler, link initialization, store-and-forward FC frames with CRC-32, buffer-to-buffer credit and R_RDY, and an RS(255,239) FEC engine over GF(2^8). A control block carries the FC-FS ordered set in bits `[31:0]` (first character in `[7:0]`): Idle is `BC 95 B5 B5`, R_RDY is `BC 95 4A 4A`, and NOS / OLS / LR / LRR use their FC-FS sequences. Frames are transmitted as SOFi3 … EOFt. The receiver accepts the SOF family and both running-disparity forms of EOFt, EOFn, and EOFdt. EOFa and the invalid EOF delimiters discard the frame. The pipe's container is still this 66-bit block. Control bit 5 packs four of those blocks into one Clause 119 256b/257b word on the system gearbox; the omitted nibble of a K28.5 ordered set is restored as `0xBC`. Link bring-up transmits NOS until block lock, then OLS, LR, LRR, and Idle. Active is that handshake, or a run of Idle from a peer that is already up. One NOS drops the link. `scripts/gen_fc_rs_tables.py` regenerates `rtl/fc128/fc_rs_tables.vh`. FC-PI-8 RS(544,514) over GF(2^10), roots alpha^0 through alpha^29, is `fc_rs544` (`scripts/gen_fc_rs544_tables.py`). A full codeword is 544 ten-bit symbols, so the 256-byte frame buffer still uses the shorter code. Twenty 257-bit transcoded blocks are 514 symbols, which is where that engine attaches. System-lane block lock crosses into the client clock through a two-flop synchronizer before it gates the return path.
+The pipeline on each port is block lock, a self-synchronizing x^58+x^39+1 scrambler, link initialization, store-and-forward FC frames with CRC-32, buffer-to-buffer credit and R_RDY, and an RS(255,239) FEC engine over GF(2^8). A control block carries the FC-FS ordered set in bits `[31:0]` (first character in `[7:0]`): Idle is `BC 95 B5 B5`, R_RDY is `BC 95 4A 4A`, and NOS / OLS / LR / LRR use their FC-FS sequences. Frames are transmitted as SOFi3 … EOFt. The receiver accepts the SOF family and both running-disparity forms of EOFt, EOFn, and EOFdt. EOFa and the invalid EOF delimiters discard the frame. The pipe's container is still this 66-bit block. Control bit 5 packs four of those blocks into one Clause 119 256b/257b word on the system gearbox; the omitted nibble of a K28.5 ordered set is restored as `0xBC`. Link bring-up transmits NOS until block lock, then OLS, LR, LRR, and Idle. Active is that handshake, or a run of Idle from a peer that is already up. One NOS drops the link. `scripts/gen_fc_rs_tables.py` regenerates `rtl/fc128/fc_rs_tables.vh`. FC-PI-8 RS(544,514) over GF(2^10), roots alpha^0 through alpha^29, is `fc_rs544` (`scripts/gen_fc_rs544_tables.py`). A full codeword is 544 ten-bit symbols, so the 256-byte frame buffer still uses the shorter code. Control bit 6, together with the transcode, runs that code on the packed stream: twenty 257-bit words are the message, and the thirty parity symbols leave as five beats with sync `11`. The receiver locks onto that trailer, corrects the symbols, and strips the parity before the 66-bit blocks are restored. System-lane block lock crosses into the client clock through a two-flop synchronizer before it gates the return path.
 
 Run the self-checking simulations with Icarus Verilog:
 
@@ -45,7 +45,7 @@ The top-level CSR (client clock, word addresses) is:
 | Offset | Register |
 |---|---|
 | `0x000` | ID `0xFC128039` |
-| `0x008` | Control: reset, system loopback, FEC, scrambler, secondary protect, 256b/257b transcode |
+| `0x008` | Control: reset, system loopback, FEC, scrambler, secondary protect, 256b/257b transcode, RS(544,514) |
 | `0x00C` | Client block-lock bits |
 | `0x010` | Port enable |
 | `0x018` | Load credits `{client[15:8], system[7:0]}` |
@@ -54,3 +54,4 @@ The top-level CSR (client clock, word addresses) is:
 | `0x028` | System block-lock bits, synced onto the client clock |
 | `0x100 + 32*port` | Frame, CRC, and FEC counters |
 | `0x118 + 32*port` | Link state `{system_ls[2:0], client_ls[2:0], system_up, client_up}` |
+| `0x11C + 32*port` | RS(544,514) `{uncorrectable codewords[15:0], corrected symbols[15:0]}` |
