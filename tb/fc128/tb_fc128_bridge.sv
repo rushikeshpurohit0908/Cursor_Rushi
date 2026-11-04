@@ -218,6 +218,7 @@ module tb_fc128_bridge;
 
   integer errors = 0;
   integer fec_corrupt = 0;
+  reg [31:0] rate_dw;
   reg [7:0] pay [0:255];
 
   task automatic csr_write_t(input [11:0] a, input [31:0] d);
@@ -239,6 +240,38 @@ module tb_fc128_bridge;
       @(posedge clk_client);
       d = csr_rdata;
       csr_read <= 1'b0;
+    end
+  endtask
+
+  task automatic wait_rate_busy(input [11:0] a, input [1:0] code);
+    integer k;
+    begin
+      k = 0;
+      rate_dw = 32'h0;
+      while (rate_dw[4] !== 1'b1 && k < 40) begin
+        csr_read_t(a, rate_dw);
+        k = k + 1;
+      end
+      if (rate_dw[1:0] !== code || rate_dw[4] !== 1'b1) begin
+        $display("FAIL rate busy %h got %h", a, rate_dw);
+        errors = errors + 1;
+      end
+    end
+  endtask
+
+  task automatic wait_rate(input [11:0] a, input [1:0] code);
+    integer k;
+    begin
+      k = 0;
+      rate_dw = 32'h10;
+      while (rate_dw[4] && k < 4000) begin
+        csr_read_t(a, rate_dw);
+        k = k + 1;
+      end
+      if (rate_dw[4] || rate_dw[1:0] !== code) begin
+        $display("FAIL rate settle %h got %h", a, rate_dw);
+        errors = errors + 1;
+      end
     end
   endtask
 
@@ -416,29 +449,21 @@ module tb_fc128_bridge;
       errors = errors + 1;
     end
     csr_write_t(12'h218, 32'h0000_0002);
-    csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0000_0002) begin
-      $display("FAIL rate 32 %h", rdw);
-      errors = errors + 1;
-    end
+    wait_rate_busy(12'h218, 2'b10);
+    wait_rate(12'h218, 2'b10);
     csr_write_t(12'h238, 32'h0000_0001);
-    csr_read_t(12'h238, rdw);
-    if (rdw !== 32'h0000_0001) begin
-      $display("FAIL rate port1 %h", rdw);
-      errors = errors + 1;
-    end
+    wait_rate_busy(12'h238, 2'b01);
     csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0000_0002) begin
+    if (rdw[1:0] !== 2'b10) begin
       $display("FAIL rate port0 clobber %h", rdw);
       errors = errors + 1;
     end
+    wait_rate(12'h238, 2'b01);
     csr_write_t(12'h218, 32'h0000_0003);
-    csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0) begin
-      $display("FAIL rate reserved %h", rdw);
-      errors = errors + 1;
-    end
+    wait_rate_busy(12'h218, 2'b00);
+    wait_rate(12'h218, 2'b00);
     csr_write_t(12'h238, 32'h0);
+    wait_rate(12'h238, 2'b00);
 
     // System lanes carry 256b/257b. The client port stays a 66-bit block.
     csr_write_t(12'h008, 32'h0000_002A);
