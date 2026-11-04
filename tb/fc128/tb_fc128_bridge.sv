@@ -1150,6 +1150,47 @@ module tb_fc128_bridge;
       $display("FAIL cmis aux3 restore %h", rdw);
       errors = errors + 1;
     end
+    begin : cmis_vend
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h500, rdw);
+        if (rdw == 32'h414C5445) begin
+          csr_read_t(12'h504, rdw);
+          if (rdw == 32'h52412020) begin
+            csr_read_t(12'h508, rdw);
+            if (rdw == 32'h20202020) begin
+              csr_read_t(12'h50C, rdw);
+              if (rdw == 32'h20202020) begin
+                csr_read_t(12'h510, rdw);
+                if (rdw == 32'h53465031) begin
+                  csr_read_t(12'h514, rdw);
+                  if (rdw == 32'h31322D31) begin
+                    csr_read_t(12'h518, rdw);
+                    if (rdw == 32'h32384746) begin
+                      csr_read_t(12'h51C, rdw);
+                      if (rdw == 32'h43202020) begin
+                        csr_read_t(12'h520, rdw);
+                        if (rdw == 32'h0)
+                          disable cmis_vend;
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      $display("FAIL cmis vendor %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h500, 32'hFFFF_FFFF);
+    csr_read_t(12'h500, rdw);
+    if (rdw !== 32'h414C5445) begin
+      $display("FAIL cmis vendor write %h", rdw);
+      errors = errors + 1;
+    end
 
     if (errors == 0)
       $display("PASS tb_fc128_bridge");

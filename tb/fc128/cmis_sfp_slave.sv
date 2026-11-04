@@ -39,8 +39,10 @@
 // 1 MHz. Byte 11 latches the eight high/low alarm and warning flags for
 // those monitors. A read clears a latch whose comparison is no longer true.
 // A negative Vcc2 or frequency error does not set a high alarm. Byte 34
-// masks those flags out of IntL and powers up at FFh. The slave does not
-// stretch SCL. sda_oe drives a zero on the open-drain pad.
+// masks those flags out of IntL and powers up at FFh. Page 00h bytes
+// 128-143 and 148-163 are VendorName and VendorPN. Both are fixed
+// space-padded strings, and a write does not change them. The slave does
+// not stretch SCL. sda_oe drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
   parameter [7:0] TXDIS_INIT = 8'hA0
@@ -324,6 +326,14 @@ module cmis_sfp_slave #(
     end
   endtask
 
+  function automatic [7:0] vend_at(input [127:0] word, input [7:0] off);
+    integer bitidx;
+    begin
+      bitidx = 127 - 8 * off;
+      vend_at = word[bitidx -: 8];
+    end
+  endfunction
+
   function automatic [7:0] peek(input [7:0] a);
     reg [15:0] tw;
     reg [3:0]  ab;
@@ -362,6 +372,12 @@ module cmis_sfp_slave #(
         peek = cust_s16[15:8];
       else if (a == CMIS_CUST_MON + 8'd1)
         peek = cust_s16[7:0];
+      else if (mem[CMIS_PAGE] == CMIS_VEND_PAGE &&
+               a >= CMIS_VNAME && a < CMIS_VNAME + 8'd16)
+        peek = vend_at(CMIS_VENDOR_NAME, a - CMIS_VNAME);
+      else if (mem[CMIS_PAGE] == CMIS_VEND_PAGE &&
+               a >= CMIS_VPN && a < CMIS_VPN + 8'd16)
+        peek = vend_at(CMIS_VENDOR_PN, a - CMIS_VPN);
       else if (a < 8'd128)
         peek = mem[a];
       else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE)
@@ -555,6 +571,9 @@ module cmis_sfp_slave #(
                   ptr <= ptr + 8'd1;
                 end else if (mem[CMIS_PAGE] == CMIS_LANE_PAGE) begin
                   p10[ptr] <= sh;
+                  ptr <= ptr + 8'd1;
+                end else if (mem[CMIS_PAGE] == CMIS_VEND_PAGE) begin
+                  // VendorName and VendorPN are fixed. A write does not stick.
                   ptr <= ptr + 8'd1;
                 end else begin
                   ptr <= ptr + 8'd1;

@@ -57,6 +57,7 @@ module tb_fc_cmis;
   logic [11:0] flag_alm;
   logic [15:0] temp_rb, vcc_rb, opt_tx_rb, bias_rb, opt_rx_rb;
   logic [15:0] aux1_rb, aux2_rb, aux3_rb, cust_rb;
+  logic [127:0] vname, vpn;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
   wire sda_i = ~(sda_oe | sda_slave);
@@ -94,6 +95,7 @@ module tb_fc_cmis;
     .opt_tx_u16(opt_tx_rb), .bias_tx_u16(bias_rb), .opt_rx_u16(opt_rx_rb),
     .aux1_s16(aux1_rb), .aux2_s16(aux2_rb),
     .aux3_s16(aux3_rb), .cust_s16(cust_rb),
+    .vendor_name(vname), .vendor_pn(vpn),
     .scl_oe(scl_oe), .sda_oe(sda_oe), .scl_i(scl_i), .sda_i(sda_i)
   );
 
@@ -222,14 +224,19 @@ module tb_fc_cmis;
       integer k;
       for (k = 0; k < 200000; k = k + 1) begin
         @(posedge clk);
-        if (!present && !scl_oe && !sda_oe)
+        if (!present && !scl_oe && !sda_oe && vname == 128'h0 && vpn == 128'h0)
           disable abs_watch;
       end
-      $display("FAIL absent present %b oe %b%b", present, scl_oe, sda_oe);
+      $display("FAIL absent present %b oe %b%b name %h pn %h",
+               present, scl_oe, sda_oe, vname, vpn);
       errors = errors + 1;
     end
     mod_prs_n = 0;
     wait_state(CMIS_ST_RDY, 200000, "inserted");
+    if (vname !== CMIS_VENDOR_NAME || vpn !== CMIS_VENDOR_PN) begin
+      $display("FAIL vendor reinsert name %h pn %h", vname, vpn);
+      errors = errors + 1;
+    end
 
     reset_n = 0;
     repeat (30) @(posedge clk);
@@ -1265,6 +1272,39 @@ module tb_fc_cmis;
       $display("FAIL aux3 restore flags %h aux %h %h mask %h",
                flag3, aux3_rb, cust_rb, mod.mem[CMIS_MSK_A3]);
       errors = errors + 1;
+    end
+
+    begin : vend_live
+      integer k;
+      for (k = 0; k < 200000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && present && vname == CMIS_VENDOR_NAME &&
+            vpn == CMIS_VENDOR_PN && mod.mem[CMIS_PAGE] != CMIS_VEND_PAGE)
+          disable vend_live;
+      end
+      $display("FAIL vendor live name %h pn %h page %h",
+               vname, vpn, mod.mem[CMIS_PAGE]);
+      errors = errors + 1;
+    end
+    // A write into the page 00h window must not replace the advertised string.
+    begin
+      reg [7:0] saved_page;
+      reg [7:0] saved_mem;
+      reg [7:0] saved_p10;
+      saved_page = mod.mem[CMIS_PAGE];
+      saved_mem = mod.mem[CMIS_VNAME];
+      saved_p10 = mod.p10[CMIS_VNAME];
+      mod.mem[CMIS_PAGE] = CMIS_VEND_PAGE;
+      mod.mem[CMIS_VNAME] = 8'h58;
+      mod.p10[CMIS_VNAME] = 8'h58;
+      if (mod.peek(CMIS_VNAME) !== 8'h41 || mod.peek(CMIS_VPN) !== 8'h53) begin
+        $display("FAIL vendor write stuck %h %h",
+                 mod.peek(CMIS_VNAME), mod.peek(CMIS_VPN));
+        errors = errors + 1;
+      end
+      mod.mem[CMIS_VNAME] = saved_mem;
+      mod.p10[CMIS_VNAME] = saved_p10;
+      mod.mem[CMIS_PAGE] = saved_page;
     end
 
     if (errors == 0)
