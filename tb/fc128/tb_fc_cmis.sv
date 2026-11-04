@@ -22,6 +22,7 @@ module tb_fc_cmis;
   logic mask_lol_tx = 1;
   logic mask_los_rx = 1;
   logic mask_lol_rx = 1;
+  logic [11:0] mask_alm = 12'hFFF;
   logic tx_fail = 0;
   logic los_tx = 0;
   logic lol_tx = 0;
@@ -45,6 +46,7 @@ module tb_fc_cmis;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state, int_n;
   logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
+  logic [11:0] flag_alm;
   logic [15:0] temp_rb, vcc_rb, opt_tx_rb, bias_rb, opt_rx_rb;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
@@ -59,6 +61,7 @@ module tb_fc_cmis;
     .mask_fail(mask_fail), .mask_los_tx(mask_los_tx),
     .mask_lol_tx(mask_lol_tx), .mask_los_rx(mask_los_rx),
     .mask_lol_rx(mask_lol_rx),
+    .mask_alm(mask_alm),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -70,6 +73,7 @@ module tb_fc_cmis;
     .flag_fail(flag_fail), .flag_los_tx(flag_los_tx),
     .flag_lol_tx(flag_lol_tx), .flag_los_rx(flag_los_rx),
     .flag_lol_rx(flag_lol_rx),
+    .flag_alm(flag_alm),
     .ident(ident), .rev(rev), .mod_state(mod_state),
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
@@ -539,6 +543,80 @@ module tb_fc_cmis;
           disable mon_new;
       end
       $display("FAIL monitors update %h %h %h", opt_tx_rb, bias_rb, opt_rx_rb);
+      errors = errors + 1;
+    end
+
+    // Rx is 0, which is under both low thresholds. Tx and bias stay inside
+    // their windows, and the alarm masks still hold IntL high.
+    begin : alm_rx0
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag_alm == 12'hA00 && int_deasserted && int_n)
+          disable alm_rx0;
+      end
+      $display("FAIL rx low alarm %h int %b pin %b", flag_alm, int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    opt_tx_u16 = 16'h5000;
+    begin : alm_txhi
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag_alm == 12'hA05)
+          disable alm_txhi;
+      end
+      $display("FAIL tx high alarm %h", flag_alm);
+      errors = errors + 1;
+    end
+    opt_tx_u16 = 16'h00C8;
+    bias_tx_u16 = 16'h0700;
+    begin : alm_bilo
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag_alm == 12'hAA0)
+          disable alm_bilo;
+      end
+      $display("FAIL bias low alarm %h", flag_alm);
+      errors = errors + 1;
+    end
+    bias_tx_u16 = 16'h2710;
+    begin : alm_biclr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!busy && flag_alm == 12'hA00)
+          disable alm_biclr;
+      end
+      $display("FAIL bias alarm clear %h", flag_alm);
+      errors = errors + 1;
+    end
+    mask_alm = 12'hDFF;
+    begin : alm_int
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.p10[CMIS_MSK_RX_LA] == 8'hFE &&
+            mod.p10[CMIS_MSK_RX_HA] == 8'hFF &&
+            mod.p10[CMIS_MSK_TX_HA] == 8'hFF &&
+            mod.p10[CMIS_MSK_LOSRX] == 8'hFF &&
+            flag_alm == 12'hA00 && !int_deasserted && !int_n && !busy)
+          disable alm_int;
+      end
+      $display("FAIL alarm int %h mask %h int %b pin %b",
+               flag_alm, mod.p10[CMIS_MSK_RX_LA], int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    mask_alm = 12'hFFF;
+    begin : alm_mask
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.p10[CMIS_MSK_RX_LA] == 8'hFF && int_deasserted && int_n && !busy)
+          disable alm_mask;
+      end
+      $display("FAIL alarm mask restore %h int %b", mod.p10[CMIS_MSK_RX_LA], int_deasserted);
       errors = errors + 1;
     end
 

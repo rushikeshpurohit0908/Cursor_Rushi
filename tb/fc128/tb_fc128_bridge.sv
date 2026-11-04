@@ -717,6 +717,59 @@ module tb_fc128_bridge;
       $display("FAIL cmis optical held %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h308, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis alarm quiet %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h30C, rdw);
+    if (rdw !== 32'h0000_0FFF) begin
+      $display("FAIL cmis alarm mask %h", rdw);
+      errors = errors + 1;
+    end
+    cmis_opt_tx = 16'h5000;
+    begin : cmis_alm
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h308, rdw);
+        if (rdw == 32'h0000_0005)
+          disable cmis_alm;
+      end
+      $display("FAIL cmis tx alarm %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h30C, 32'h0000_0FFE);
+    begin : cmis_alm_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h308, rdw);
+        if (rdw[0]) begin
+          csr_read_t(12'h204, rdw);
+          if (!rdw[19] && !rdw[24])
+            disable cmis_alm_int;
+        end
+      end
+      $display("FAIL cmis alarm int %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h30C, 32'h0000_0FFF);
+    cmis_opt_tx = 16'h2710;
+    begin : cmis_alm_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h308, rdw);
+        if (rdw == 32'h0) begin
+          csr_read_t(12'h204, rdw);
+          if (rdw[19] && rdw[24])
+            disable cmis_alm_clr;
+        end
+      end
+      $display("FAIL cmis alarm clear %h", rdw);
+      errors = errors + 1;
+    end
     cmis_opt_tx = 16'h00C8;
     cmis_bias = 16'h2710;
     cmis_opt_rx = 16'h0000;

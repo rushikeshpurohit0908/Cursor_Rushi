@@ -18,13 +18,16 @@
 //   * select page 11h and read the lane 1 data path state, output status,
 //     ConfigStatus, the active AppSel, and DPInitPending. The same pass
 //     reads the clear-on-read lane flags: Tx failure, Tx LOS, Tx CDR LOL,
-//     Rx LOS, and Rx CDR LOL. It also reads the lane-1 monitors:
-//     OpticalPowerTx at bytes 154-155, LaserBiasTx at bytes 170-171, and
-//     OpticalPowerRx at bytes 186-187. Those three are live values, not
-//     clear-on-read latches.
-//   * on page 10h, read-modify-write bit 0 of the five lane-flag masks so
-//     an unmasked flag can assert the module interrupt. Bits [7:1] of each
-//     mask byte stay as the module set them.
+//     Rx LOS, and Rx CDR LOL. Bytes 139-146 and 149-152 are the lane-1
+//     optical and laser alarm/warning flags, also clear-on-read. It also
+//     reads the lane-1 monitors: OpticalPowerTx at bytes 154-155,
+//     LaserBiasTx at bytes 170-171, and OpticalPowerRx at bytes 186-187.
+//     Those three are live values, not clear-on-read latches.
+//   * on page 10h, read-modify-write bit 0 of the lane-flag masks so an
+//     unmasked flag can assert the module interrupt. Bits [7:1] of each
+//     mask byte stay as the module set them. The five link flags use bytes
+//     214, 215, 216, 226, and 227. The twelve alarm flags use bytes 218-225
+//     and 228-231.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -50,6 +53,7 @@ module fc_cmis_host #(
   input  logic        mask_lol_tx,
   input  logic        mask_los_rx,
   input  logic        mask_lol_rx,
+  input  logic [11:0] mask_alm,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -74,6 +78,7 @@ module fc_cmis_host #(
   output logic        flag_lol_tx,
   output logic        flag_los_rx,
   output logic        flag_lol_rx,
+  output logic [11:0] flag_alm,
   output logic [7:0]  ident,
   output logic [7:0]  rev,
   output logic [2:0]  mod_state,
@@ -126,6 +131,9 @@ module fc_cmis_host #(
   localparam [4:0] OP_MON_TX = 5'd27;
   localparam [4:0] OP_MON_BI = 5'd28;
   localparam [4:0] OP_MON_RX = 5'd29;
+  localparam [4:0] OP_AL_TX  = 5'd30;
+  localparam [4:0] OP_AL_RX  = 5'd31;
+  localparam [4:0] MK_LAST   = 5'd16;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -138,9 +146,10 @@ module fc_cmis_host #(
   logic        ctrl_ok, tx_ok, sq_ok, dp_ok, as_ok, st_fresh, sw_pend, ap_pend;
   logic        mk_ok;
   logic [7:0]  as_rb;
-  logic [2:0]  mk_i;
-  logic [4:0]  mk_snap;
+  logic [4:0]  mk_i;
+  logic [16:0] mk_snap;
   logic        mk_fail_rb, mk_los_tx_rb, mk_lol_tx_rb, mk_los_rx_rb, mk_lol_rx_rb;
+  logic [11:0] mk_alm_rb;
   logic [15:0] gapcnt;
 
   fc_i2c_master #(.DIV(DIV), .DEV(CMIS_DEV)) u_i2c (
@@ -166,17 +175,46 @@ module fc_cmis_host #(
     end
   endfunction
 
-  function automatic [7:0] mask_addr(input [2:0] idx);
+  function automatic [7:0] mask_addr(input [4:0] idx);
     begin
       case (idx)
-        3'd0: mask_addr = CMIS_MSK_FAIL;
-        3'd1: mask_addr = CMIS_MSK_LOSTX;
-        3'd2: mask_addr = CMIS_MSK_LOLTX;
-        3'd3: mask_addr = CMIS_MSK_LOSRX;
-        default: mask_addr = CMIS_MSK_LOLRX;
+        5'd0:  mask_addr = CMIS_MSK_FAIL;
+        5'd1:  mask_addr = CMIS_MSK_LOSTX;
+        5'd2:  mask_addr = CMIS_MSK_LOLTX;
+        5'd3:  mask_addr = CMIS_MSK_LOSRX;
+        5'd4:  mask_addr = CMIS_MSK_LOLRX;
+        5'd5:  mask_addr = CMIS_MSK_TX_HA;
+        5'd6:  mask_addr = CMIS_MSK_TX_LA;
+        5'd7:  mask_addr = CMIS_MSK_TX_HW;
+        5'd8:  mask_addr = CMIS_MSK_TX_LW;
+        5'd9:  mask_addr = CMIS_MSK_BI_HA;
+        5'd10: mask_addr = CMIS_MSK_BI_LA;
+        5'd11: mask_addr = CMIS_MSK_BI_HW;
+        5'd12: mask_addr = CMIS_MSK_BI_LW;
+        5'd13: mask_addr = CMIS_MSK_RX_HA;
+        5'd14: mask_addr = CMIS_MSK_RX_LA;
+        5'd15: mask_addr = CMIS_MSK_RX_HW;
+        default: mask_addr = CMIS_MSK_RX_LW;
       endcase
     end
   endfunction
+
+  // Commit the mask readback only when the CSR request is still the snapshot
+  // the walk programmed. Index 0 is FailureFlagTx. Indexes 5..16 follow
+  // mask_alm[0] (Tx high alarm) through mask_alm[11] (Rx low warning).
+  task automatic take_masks;
+    begin
+      if ({mask_alm, mask_lol_rx, mask_los_rx, mask_lol_tx, mask_los_tx, mask_fail} == mk_snap) begin
+        mk_fail_rb   <= mk_snap[0];
+        mk_los_tx_rb <= mk_snap[1];
+        mk_lol_tx_rb <= mk_snap[2];
+        mk_los_rx_rb <= mk_snap[3];
+        mk_lol_rx_rb <= mk_snap[4];
+        mk_alm_rb    <= mk_snap[16:5];
+        mk_ok        <= 1'b1;
+      end
+    end
+  endtask
 
   assign busy  = launch || inflight;
   assign armed = ctrl_ok && tx_ok;
@@ -202,13 +240,14 @@ module fc_cmis_host #(
       as_ok     <= 1'b0;
       as_rb     <= 8'h00;
       mk_ok     <= 1'b0;
-      mk_i      <= 3'd0;
-      mk_snap   <= 5'h1F;
+      mk_i      <= 5'd0;
+      mk_snap   <= 17'h1FFFF;
       mk_fail_rb   <= 1'b1;
       mk_los_tx_rb <= 1'b1;
       mk_lol_tx_rb <= 1'b1;
       mk_los_rx_rb <= 1'b1;
       mk_lol_rx_rb <= 1'b1;
+      mk_alm_rb    <= 12'hFFF;
       st_fresh  <= 1'b0;
       sw_pend   <= 1'b0;
       ap_pend   <= 1'b0;
@@ -233,6 +272,7 @@ module fc_cmis_host #(
       flag_lol_tx   <= 1'b0;
       flag_los_rx   <= 1'b0;
       flag_lol_rx   <= 1'b0;
+      flag_alm      <= 12'h000;
       ident     <= 8'h00;
       rev       <= 8'h00;
       mod_state <= 3'd0;
@@ -286,6 +326,7 @@ module fc_cmis_host #(
           flag_lol_tx   <= 1'b0;
           flag_los_rx   <= 1'b0;
           flag_lol_rx   <= 1'b0;
+          flag_alm      <= 12'h000;
           opt_tx_u16    <= 16'h0000;
           bias_tx_u16   <= 16'h0000;
           opt_rx_u16    <= 16'h0000;
@@ -496,33 +537,43 @@ module fc_cmis_host #(
             end
             OP_MON_RX: begin
               opt_rx_u16 <= {cap[0], cap[1]};
+              op        <= OP_AL_TX;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_ALM_TX;
+              cmd_rlen  <= 6'd8;
+              launch    <= 1'b1;
+            end
+            OP_AL_TX: begin
+              flag_alm[7:0] <= {cap[7][0], cap[6][0], cap[5][0], cap[4][0],
+                                cap[3][0], cap[2][0], cap[1][0], cap[0][0]};
+              op        <= OP_AL_RX;
+              cmd_write <= 1'b0;
+              cmd_addr  <= CMIS_ALM_RX;
+              cmd_rlen  <= 6'd4;
+              launch    <= 1'b1;
+            end
+            OP_AL_RX: begin
+              flag_alm[11:8] <= {cap[3][0], cap[2][0], cap[1][0], cap[0][0]};
               dp_valid   <= 1'b1;
               st_fresh   <= 1'b1;
             end
             OP_MK_PG: begin
-              mk_i      <= 3'd0;
+              mk_i      <= 5'd0;
               op        <= OP_MK_RD;
               cmd_write <= 1'b0;
-              cmd_addr  <= mask_addr(3'd0);
+              cmd_addr  <= mask_addr(5'd0);
               cmd_rlen  <= 6'd1;
               launch    <= 1'b1;
             end
             OP_MK_RD: begin
               if (cap[0][0] == mk_snap[mk_i]) begin
-                if (mk_i == 3'd4) begin
-                  if ({mask_lol_rx, mask_los_rx, mask_lol_tx, mask_los_tx, mask_fail} == mk_snap) begin
-                    mk_fail_rb   <= mk_snap[0];
-                    mk_los_tx_rb <= mk_snap[1];
-                    mk_lol_tx_rb <= mk_snap[2];
-                    mk_los_rx_rb <= mk_snap[3];
-                    mk_lol_rx_rb <= mk_snap[4];
-                    mk_ok        <= 1'b1;
-                  end
+                if (mk_i == MK_LAST) begin
+                  take_masks();
                 end else begin
-                  mk_i      <= mk_i + 3'd1;
+                  mk_i      <= mk_i + 5'd1;
                   op        <= OP_MK_RD;
                   cmd_write <= 1'b0;
-                  cmd_addr  <= mask_addr(mk_i + 3'd1);
+                  cmd_addr  <= mask_addr(mk_i + 5'd1);
                   cmd_rlen  <= 6'd1;
                   launch    <= 1'b1;
                 end
@@ -536,20 +587,13 @@ module fc_cmis_host #(
               end
             end
             OP_MK_WR: begin
-              if (mk_i == 3'd4) begin
-                if ({mask_lol_rx, mask_los_rx, mask_lol_tx, mask_los_tx, mask_fail} == mk_snap) begin
-                  mk_fail_rb   <= mk_snap[0];
-                  mk_los_tx_rb <= mk_snap[1];
-                  mk_lol_tx_rb <= mk_snap[2];
-                  mk_los_rx_rb <= mk_snap[3];
-                  mk_lol_rx_rb <= mk_snap[4];
-                  mk_ok        <= 1'b1;
-                end
+              if (mk_i == MK_LAST) begin
+                take_masks();
               end else begin
-                mk_i      <= mk_i + 3'd1;
+                mk_i      <= mk_i + 5'd1;
                 op        <= OP_MK_RD;
                 cmd_write <= 1'b0;
-                cmd_addr  <= mask_addr(mk_i + 3'd1);
+                cmd_addr  <= mask_addr(mk_i + 5'd1);
                 cmd_rlen  <= 6'd1;
                 launch    <= 1'b1;
               end
@@ -598,6 +642,7 @@ module fc_cmis_host #(
             flag_lol_tx   <= 1'b0;
             flag_los_rx   <= 1'b0;
             flag_lol_rx   <= 1'b0;
+            flag_alm      <= 12'h000;
             opt_tx_u16    <= 16'h0000;
             bias_tx_u16   <= 16'h0000;
             opt_rx_u16    <= 16'h0000;
@@ -650,8 +695,8 @@ module fc_cmis_host #(
           launch    <= 1'b1;
         end else if (!mk_ok || mask_fail != mk_fail_rb || mask_los_tx != mk_los_tx_rb ||
                      mask_lol_tx != mk_lol_tx_rb || mask_los_rx != mk_los_rx_rb ||
-                     mask_lol_rx != mk_lol_rx_rb) begin
-          mk_snap   <= {mask_lol_rx, mask_los_rx, mask_lol_tx, mask_los_tx, mask_fail};
+                     mask_lol_rx != mk_lol_rx_rb || mask_alm != mk_alm_rb) begin
+          mk_snap   <= {mask_alm, mask_lol_rx, mask_los_rx, mask_lol_tx, mask_los_tx, mask_fail};
           op        <= OP_MK_PG;
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
