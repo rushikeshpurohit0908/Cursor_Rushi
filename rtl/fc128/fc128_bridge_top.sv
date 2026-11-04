@@ -24,7 +24,10 @@
 // in `0x20C[15:8]`. The byte 32 mask is `0x310` and resets to `8'hFF`.
 // Lower byte 10, the Aux1/Aux2 threshold flags, is `0x20C[23:16]`.
 // Aux1 laser temperature and Aux2 TEC current are at `0x314`. The byte
-// 33 mask is `0x318` and resets to `8'hFF`.
+// 33 mask is `0x318` and resets to `8'hFF`. Lower byte 11, the Aux3
+// and custom threshold flags, is `0x20C[31:24]`. Aux3 supply and the
+// custom laser frequency error are at `0x31C`. The byte 34 mask is
+// `0x400` and resets to `8'hFF`.
 // The line rate for that port
 // is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 stays set while
 // that write is applied: both links drop, the pipes finish the current
@@ -190,6 +193,8 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][15:0] cmis_vcc;
   logic [N_CLIENT-1:0][15:0] cmis_aux1;
   logic [N_CLIENT-1:0][15:0] cmis_aux2;
+  logic [N_CLIENT-1:0][15:0] cmis_aux3;
+  logic [N_CLIENT-1:0][15:0] cmis_cust;
   logic [N_CLIENT-1:0][3:0]  cmis_dp;
   logic [N_CLIENT-1:0]       cmis_rxst;
   logic [N_CLIENT-1:0]       cmis_txst;
@@ -212,6 +217,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][11:0] cmis_omask;
   logic [N_CLIENT-1:0][7:0]  cmis_mmask;
   logic [N_CLIENT-1:0][7:0]  cmis_amask;
+  logic [N_CLIENT-1:0][7:0]  cmis_cmask;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
@@ -315,6 +321,7 @@ module fc128_bridge_top #(
         .opt_mask(cmis_omask[gi]),
         .mod_mask(cmis_mmask[gi]),
         .aux_mask(cmis_amask[gi]),
+        .cst_mask(cmis_cmask[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -336,6 +343,8 @@ module fc128_bridge_top #(
         .vcc_u16(cmis_vcc[gi]),
         .aux1_s16(cmis_aux1[gi]),
         .aux2_s16(cmis_aux2[gi]),
+        .aux3_s16(cmis_aux3[gi]),
+        .cust_s16(cmis_cust[gi]),
         .dp_state(cmis_dp[gi]),
         .rx_status(cmis_rxst[gi]),
         .tx_status(cmis_txst[gi]),
@@ -388,6 +397,7 @@ module fc128_bridge_top #(
       cmis_omask <= {N_CLIENT{12'hFFF}};
       cmis_mmask <= {N_CLIENT{8'hFF}};
       cmis_amask <= {N_CLIENT{8'hFF}};
+      cmis_cmask <= {N_CLIENT{8'hFF}};
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
       cmis_apply <= '0;
@@ -429,6 +439,9 @@ module fc128_bridge_top #(
       end else if (csr_write && csr_addr[11:8] == 4'h3 && csr_addr[4:2] == 3'd6 &&
                    csr_addr[7:5] < N_CLIENT) begin
         cmis_amask[csr_addr[7:5]] <= csr_wdata[7:0];
+      end else if (csr_write && csr_addr[11:8] == 4'h4 && csr_addr[4:2] == 3'd0 &&
+                   csr_addr[7:5] < N_CLIENT) begin
+        cmis_cmask[csr_addr[7:5]] <= csr_wdata[7:0];
       end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
@@ -535,6 +548,15 @@ module fc128_bridge_top #(
             3'd5: rdata_mux = {cmis_aux2[port_idx], cmis_aux1[port_idx]};
             // Byte 33 mask. Not packed into 0x310.
             3'd6: rdata_mux = {24'h0, cmis_amask[port_idx]};
+            // {Custom laser frequency error, Aux3 Vcc2}. Flags stay in
+            // 0x20C[31:24] (lower byte 11).
+            3'd7: rdata_mux = {cmis_cust[port_idx], cmis_aux3[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h4 && csr_addr[7:5] < N_CLIENT) begin
+          case (csr_addr[4:2])
+            // Byte 34 mask. The 0x300 window ends at 0x31C.
+            3'd0: rdata_mux = {24'h0, cmis_cmask[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end
