@@ -30,7 +30,9 @@
 // clears those flags. Lower byte 11 is the Aux3 supply and custom
 // laser-frequency threshold flags. Both compares are signed. Bytes
 // 22-25 hold the monitors. Lower byte 34 masks byte 11 and powers up
-// at FFh. A read of byte 11 clears those flags. One data
+// at FFh. A read of byte 11 clears those flags. Page 00h bytes
+// 128-143 and 148-163 are VendorName and VendorPN. A read returns
+// those constants and a write does not change them. One data
 // path, lane 1, follows Figure 6-5 with
 // SteppedConfigOnly = 0. ModuleReady and DPDeinit clear run the path up.
 // A successful ApplyDPInit copies the staged byte, sets DPInitPending, and
@@ -274,6 +276,15 @@ module cmis_sfp_slave #(
     end
   endtask
 
+  function automatic [7:0] id_byte(input [127:0] word, input [3:0] idx);
+    reg [127:0] sh;
+    begin
+      // idx 0 is the CMIS lower address, which is the MSB of word.
+      sh = word << (idx * 8);
+      id_byte = sh[127:120];
+    end
+  endfunction
+
   function automatic [7:0] peek(input [7:0] a);
     begin
       if (a == 8'd3)
@@ -377,7 +388,13 @@ module cmis_sfp_slave #(
           peek = active_sel;
         else
           peek = 8'h00;
-      end else
+      end else if (mem[CMIS_PAGE] == 8'h00 && a >= CMIS_VNAME &&
+                   a < CMIS_VNAME + 8'd16)
+        peek = id_byte(CMIS_VENDOR_NAME, a - CMIS_VNAME);
+      else if (mem[CMIS_PAGE] == 8'h00 && a >= CMIS_VPN &&
+               a < CMIS_VPN + 8'd16)
+        peek = id_byte(CMIS_VENDOR_PN, a - CMIS_VPN);
+      else
         peek = 8'h00;
     end
   endfunction

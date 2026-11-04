@@ -33,6 +33,10 @@
 //   * read-modify-write lower byte 34 so the Aux3/Custom masks follow
 //     cst_mask. That write stays after byte 33 and before the armed
 //     status pass. The whole byte is those eight masks.
+//   * once byte 34 is current, select page 00h and read VendorName
+//     (bytes 128-143) and VendorPN (bytes 148-163). That read waits
+//     until after the first poll, so the first page 11h pass stays
+//     bytes 128-134, and it is not repeated until the module is removed.
 //   * on the armed status pass, after the optical monitors, read lower
 //     bytes 18-21 (Aux1 laser temperature, Aux2 TEC current), then
 //     bytes 22-25 (Aux3 supply, custom laser frequency error). The
@@ -101,6 +105,10 @@ module fc_cmis_host #(
   output logic [15:0] aux2_s16,
   output logic [15:0] aux3_s16,
   output logic [15:0] cust_s16,
+  // Page 00h. [0] is bytes 128-131 / 148-151, byte 128 and byte 148 in
+  // bits [31:24]. Not packed into the 0x400 mask register.
+  output logic [3:0][31:0] vendor_name,
+  output logic [3:0][31:0] vendor_pn,
   output logic [3:0]  dp_state,
   output logic        rx_status,
   output logic        tx_status,
@@ -161,6 +169,8 @@ module fc_cmis_host #(
   localparam [5:0] OP_RDCST = 6'd31;
   localparam [5:0] OP_RDCM  = 6'd32;
   localparam [5:0] OP_WRCM  = 6'd33;
+  localparam [5:0] OP_RDVN  = 6'd34;
+  localparam [5:0] OP_RDPN  = 6'd35;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -183,6 +193,7 @@ module fc_cmis_host #(
   logic [7:0]  amask_rb;
   logic        cmask_ok;
   logic [7:0]  cmask_rb;
+  logic        vend_ok;
   logic [7:0]  opt_lo;
   logic [15:0] gapcnt;
 
@@ -298,6 +309,7 @@ module fc_cmis_host #(
       amask_rb  <= 8'h00;
       cmask_ok  <= 1'b0;
       cmask_rb  <= 8'h00;
+      vend_ok   <= 1'b0;
       opt_lo    <= 8'h00;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
@@ -322,6 +334,8 @@ module fc_cmis_host #(
       aux2_s16 <= 16'h0000;
       aux3_s16 <= 16'h0000;
       cust_s16 <= 16'h0000;
+      vendor_name <= '0;
+      vendor_pn   <= '0;
       dp_state <= 4'h0;
       rx_status <= 1'b0;
       tx_status <= 1'b0;
@@ -370,6 +384,7 @@ module fc_cmis_host #(
           mmask_ok  <= 1'b0;
           amask_ok  <= 1'b0;
           cmask_ok  <= 1'b0;
+          vend_ok   <= 1'b0;
           lane_valid <= 1'b0;
           opt_tx_u16  <= 16'h0000;
           bias_tx_u16 <= 16'h0000;
@@ -379,6 +394,8 @@ module fc_cmis_host #(
           aux2_s16    <= 16'h0000;
           aux3_s16    <= 16'h0000;
           cust_s16    <= 16'h0000;
+          vendor_name <= '0;
+          vendor_pn   <= '0;
           wait_gap  <= 1'b1;
           gapcnt    <= GAPW[15:0];
         end else begin
@@ -409,10 +426,12 @@ module fc_cmis_host #(
               // The first pass reads 128..134 only, so bring-up is sampled
               // on the same schedule as before. Later passes also take the
               // five lane-flag bytes through 148.
-              cmd_rlen  <= (nxt != OP_RD11) ? 6'd1 :
-                           (mask_arm ? CMIS_LANE_N : CMIS_DP_N);
+              cmd_rlen  <= (nxt == OP_RD11) ? (mask_arm ? CMIS_LANE_N : CMIS_DP_N) :
+                           (nxt == OP_RDVN) ? 6'd16 : 6'd1;
               if (nxt == OP_RD128 || nxt == OP_RD11)
                 cmd_addr <= CMIS_DPDEINIT;
+              else if (nxt == OP_RDVN)
+                cmd_addr <= CMIS_VNAME;
               else if (nxt == OP_RD143)
                 cmd_addr <= CMIS_APPLY;
               else if (nxt == OP_RD132)
@@ -605,6 +624,26 @@ module fc_cmis_host #(
               lane_valid <= 1'b1;
               lane_ok    <= 1'b1;
             end
+            OP_RDVN: begin
+              // Bytes 128-143. Latch the name before the part-number
+              // read reuses the capture buffer.
+              vendor_name[0] <= {cap[0], cap[1], cap[2], cap[3]};
+              vendor_name[1] <= {cap[4], cap[5], cap[6], cap[7]};
+              vendor_name[2] <= {cap[8], cap[9], cap[10], cap[11]};
+              vendor_name[3] <= {cap[12], cap[13], cap[14], cap[15]};
+              op         <= OP_RDPN;
+              cmd_write  <= 1'b0;
+              cmd_addr   <= CMIS_VPN;
+              cmd_rlen   <= 6'd16;
+              launch     <= 1'b1;
+            end
+            OP_RDPN: begin
+              vendor_pn[0] <= {cap[0], cap[1], cap[2], cap[3]};
+              vendor_pn[1] <= {cap[4], cap[5], cap[6], cap[7]};
+              vendor_pn[2] <= {cap[8], cap[9], cap[10], cap[11]};
+              vendor_pn[3] <= {cap[12], cap[13], cap[14], cap[15]};
+              vend_ok <= 1'b1;
+            end
             OP_RDMSK: begin
               if (cap[0][0] == flag_mask[mask_i]) begin
                 mask_rb <= mask_put(mask_rb, mask_i, flag_mask[mask_i]);
@@ -764,6 +803,7 @@ module fc_cmis_host #(
             mmask_ok   <= 1'b0;
             amask_ok   <= 1'b0;
             cmask_ok   <= 1'b0;
+            vend_ok    <= 1'b0;
             lane_valid <= 1'b0;
             opt_tx_u16  <= 16'h0000;
             bias_tx_u16 <= 16'h0000;
@@ -773,6 +813,8 @@ module fc_cmis_host #(
             aux2_s16    <= 16'h0000;
             aux3_s16    <= 16'h0000;
             cust_s16    <= 16'h0000;
+            vendor_name <= '0;
+            vendor_pn   <= '0;
           end
         end else if (wait_gap) begin
           if (gapcnt == 16'd0)
@@ -866,6 +908,16 @@ module fc_cmis_host #(
           op        <= OP_RDCM;
           cmd_write <= 1'b0;
           cmd_addr  <= CMIS_CSTMSK;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (mask_arm && !vend_ok) begin
+          // Page 00h follows byte 34 and still precedes the armed status
+          // pass. The bytes 0-17 poll is unchanged.
+          op        <= OP_PG;
+          nxt       <= OP_RDVN;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= 8'h00;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else if (!lane_ok) begin

@@ -44,8 +44,11 @@
 // 100 uV) and Custom is the laser frequency error (signed 1 MHz).
 // Bytes 22-25 are those monitors. Lower byte 34 is the mask and powers
 // up at FFh. An unmasked flag is part of IntL. The bytes 0-17 poll is
-// left as it is; bytes 18-21 and 22-25 are separate reads. Byte 2 bit 6,
-// SteppedConfigOnly, stays clear.
+// left as it is; bytes 18-21 and 22-25 are separate reads. Page 00h
+// bytes 128-143 are VendorName and bytes 148-163 are VendorPN, each
+// 16 space-padded ASCII characters. Byte 128 is the first character.
+// The host reads that page once after the lower-byte masks. Byte 2
+// bit 6, SteppedConfigOnly, stays clear.
 // Lower bytes 86-97 advertise three one-lane applications. Lanes in
 // the map are numbered from 1.
 
@@ -169,6 +172,12 @@ localparam [15:0] CMIS_CUST_HA  = 16'd2000;
 localparam [15:0] CMIS_CUST_LA  = 16'hF830;
 localparam [15:0] CMIS_CUST_HW  = 16'd1000;
 localparam [15:0] CMIS_CUST_LW  = 16'hFC18;
+// Page 00h identity. "ALTERA          " and "SFP112-128GFC   ".
+// The left-hand byte is the CMIS lower address.
+localparam [7:0]   CMIS_VNAME   = 8'd128;
+localparam [7:0]   CMIS_VPN     = 8'd148;
+localparam [127:0] CMIS_VENDOR_NAME = 128'h414C5445524120202020202020202020;
+localparam [127:0] CMIS_VENDOR_PN   = 128'h5346503131322D313238474643202020;
 localparam [7:0] CMIS_CFGSTAT   = 8'd202;
 localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;
