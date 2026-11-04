@@ -7,12 +7,14 @@
 //     (LowPwrAllowRequestHW, SquelchMethodSelect) are left as the module
 //     set them.
 //   * select page 10h and read-modify-write byte 130 bit 0, OutputDisableTx
-//     for lane 1, and byte 128 bit 0, DPDeinit for lane 1. Other bits in
-//     those bytes are preserved.
-//   * on apply_pulse, write page 10h byte 143 bit 0. That register is the
-//     write-only ApplyDPInit trigger (single-byte write).
+//     for lane 1, byte 132 bit 0, OutputSquelchForceTx, and byte 128 bit 0,
+//     DPDeinit for lane 1. Other bits in those bytes are preserved.
+//   * write page 10h byte 145 when the staged AppSel byte changes, then on
+//     apply_pulse write byte 143 bit 0. Byte 143 is the write-only
+//     ApplyDPInit trigger (single-byte write).
 //   * select page 11h and read lane 1: DPState, OutputStatusRx,
-//     OutputStatusTx, DPStateChangedFlag, and DPInitPending.
+//     OutputStatusTx, DPStateChangedFlag, DPInitPending, ConfigStatus,
+//     and the active AppSel.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -29,7 +31,9 @@ module fc_cmis_host #(
   input  logic        low_pwr_sw,
   input  logic        sw_reset_pulse,
   input  logic        tx_disable,
+  input  logic        tx_squelch,
   input  logic        dp_deinit,
+  input  logic [7:0]  staged_appsel,
   input  logic        apply_pulse,
   input  logic        mod_prs_n,
 
@@ -39,6 +43,7 @@ module fc_cmis_host #(
   output logic        armed,
   output logic        low_pwr_rb,
   output logic        tx_disable_rb,
+  output logic        tx_squelch_rb,
   output logic        dp_deinit_rb,
   output logic [7:0]  ident,
   output logic [7:0]  rev,
@@ -56,6 +61,8 @@ module fc_cmis_host #(
   output logic        dp_changed,
   output logic        dp_pending,
   output logic        lane_valid,
+  output logic [3:0]  config_status,
+  output logic [7:0]  active_appsel,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -65,18 +72,24 @@ module fc_cmis_host #(
   `include "fc_cmis.vh"
 
   localparam int GAPW = (GAP < 1) ? 1 : GAP;
-  localparam [3:0] OP_RD26  = 4'd0;
-  localparam [3:0] OP_WR26  = 4'd1;
-  localparam [3:0] OP_PG    = 4'd2;
-  localparam [3:0] OP_RD130 = 4'd3;
-  localparam [3:0] OP_WR130 = 4'd4;
-  localparam [3:0] OP_POLL  = 4'd5;
-  localparam [3:0] OP_RD128 = 4'd6;
-  localparam [3:0] OP_WR128 = 4'd7;
-  localparam [3:0] OP_RD143 = 4'd8;
-  localparam [3:0] OP_WR143 = 4'd9;
-  localparam [3:0] OP_RD11  = 4'd10;
-  localparam [3:0] OP_RD235 = 4'd11;
+  localparam [4:0] OP_RD26  = 5'd0;
+  localparam [4:0] OP_WR26  = 5'd1;
+  localparam [4:0] OP_PG    = 5'd2;
+  localparam [4:0] OP_RD130 = 5'd3;
+  localparam [4:0] OP_WR130 = 5'd4;
+  localparam [4:0] OP_POLL  = 5'd5;
+  localparam [4:0] OP_RD128 = 5'd6;
+  localparam [4:0] OP_WR128 = 5'd7;
+  localparam [4:0] OP_RD143 = 5'd8;
+  localparam [4:0] OP_WR143 = 5'd9;
+  localparam [4:0] OP_RD11  = 5'd10;
+  localparam [4:0] OP_RD235 = 5'd11;
+  localparam [4:0] OP_RD132 = 5'd12;
+  localparam [4:0] OP_WR132 = 5'd13;
+  localparam [4:0] OP_RD145 = 5'd14;
+  localparam [4:0] OP_WR145 = 5'd15;
+  localparam [4:0] OP_RD202 = 5'd16;
+  localparam [4:0] OP_RD206 = 5'd17;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -84,9 +97,10 @@ module fc_cmis_host #(
   logic        rx_valid;
   logic [4:0]  rx_index;
   logic [7:0]  cap [0:31];
-  logic [3:0]  op, nxt;
+  logic [4:0]  op, nxt;
   logic        launch, inflight, wait_gap;
-  logic        ctrl_ok, tx_ok, deinit_ok, lane_ok, sw_pend, apply_pend;
+  logic        ctrl_ok, tx_ok, sq_ok, deinit_ok, as_ok, lane_ok, sw_pend, apply_pend;
+  logic [7:0]  as_rb;
   logic [15:0] gapcnt;
 
   fc_i2c_master #(.DIV(DIV), .DEV(CMIS_DEV)) u_i2c (
@@ -132,7 +146,10 @@ module fc_cmis_host #(
       wait_gap  <= 1'b0;
       ctrl_ok   <= 1'b0;
       tx_ok     <= 1'b0;
+      sq_ok     <= 1'b0;
       deinit_ok <= 1'b0;
+      as_ok     <= 1'b0;
+      as_rb     <= 8'h00;
       lane_ok   <= 1'b0;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
@@ -141,6 +158,7 @@ module fc_cmis_host #(
       nack      <= 1'b0;
       low_pwr_rb <= 1'b0;
       tx_disable_rb <= 1'b0;
+      tx_squelch_rb <= 1'b0;
       dp_deinit_rb <= 1'b0;
       ident     <= 8'h00;
       rev       <= 8'h00;
@@ -158,6 +176,8 @@ module fc_cmis_host #(
       dp_changed <= 1'b0;
       dp_pending <= 1'b0;
       lane_valid <= 1'b0;
+      config_status <= 4'h0;
+      active_appsel <= 8'h00;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -179,7 +199,9 @@ module fc_cmis_host #(
           present   <= 1'b0;
           ctrl_ok   <= 1'b0;
           tx_ok     <= 1'b0;
+          sq_ok     <= 1'b0;
           deinit_ok <= 1'b0;
+          as_ok     <= 1'b0;
           lane_ok   <= 1'b0;
           lane_valid <= 1'b0;
           wait_gap  <= 1'b1;
@@ -210,12 +232,14 @@ module fc_cmis_host #(
               op        <= nxt;
               cmd_write <= 1'b0;
               cmd_rlen  <= (nxt == OP_RD11) ? CMIS_DP_N : 6'd1;
-              if (nxt == OP_RD128)
+              if (nxt == OP_RD128 || nxt == OP_RD11)
                 cmd_addr <= CMIS_DPDEINIT;
               else if (nxt == OP_RD143)
                 cmd_addr <= CMIS_APPLY;
-              else if (nxt == OP_RD11)
-                cmd_addr <= CMIS_DPDEINIT;
+              else if (nxt == OP_RD132)
+                cmd_addr <= CMIS_SQFORCE;
+              else if (nxt == OP_RD145)
+                cmd_addr <= CMIS_SCS0;
               else
                 cmd_addr <= CMIS_TXDIS;
               launch <= 1'b1;
@@ -231,6 +255,18 @@ module fc_cmis_host #(
             OP_WR130: begin
               tx_disable_rb <= tx_disable;
               tx_ok         <= 1'b1;
+            end
+            OP_RD132: begin
+              op        <= OP_WR132;
+              cmd_write <= 1'b1;
+              cmd_addr  <= CMIS_SQFORCE;
+              cmd_wdata <= merge_bit0(cap[0], tx_squelch);
+              cmd_rlen  <= 6'd1;
+              launch    <= 1'b1;
+            end
+            OP_WR132: begin
+              tx_squelch_rb <= tx_squelch;
+              sq_ok         <= 1'b1;
             end
             OP_RD128: begin
               if (cap[0][0] == dp_deinit) begin
@@ -248,6 +284,23 @@ module fc_cmis_host #(
             OP_WR128: begin
               dp_deinit_rb <= dp_deinit;
               deinit_ok    <= 1'b1;
+            end
+            OP_RD145: begin
+              if (cap[0] == staged_appsel) begin
+                as_rb <= staged_appsel;
+                as_ok <= 1'b1;
+              end else begin
+                op        <= OP_WR145;
+                cmd_write <= 1'b1;
+                cmd_addr  <= CMIS_SCS0;
+                cmd_wdata <= staged_appsel;
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_WR145: begin
+              as_rb <= staged_appsel;
+              as_ok <= 1'b1;
             end
             OP_RD143: begin
               op        <= OP_WR143;
@@ -275,8 +328,24 @@ module fc_cmis_host #(
             end
             OP_RD235: begin
               dp_pending <= cap[0][0];
-              lane_valid <= 1'b1;
-              lane_ok    <= 1'b1;
+              op         <= OP_RD202;
+              cmd_write  <= 1'b0;
+              cmd_addr   <= CMIS_CFGSTAT;
+              cmd_rlen   <= 6'd1;
+              launch     <= 1'b1;
+            end
+            OP_RD202: begin
+              config_status <= cap[0][3:0];
+              op            <= OP_RD206;
+              cmd_write     <= 1'b0;
+              cmd_addr      <= CMIS_ACS0;
+              cmd_rlen      <= 6'd1;
+              launch        <= 1'b1;
+            end
+            OP_RD206: begin
+              active_appsel <= cap[0];
+              lane_valid    <= 1'b1;
+              lane_ok       <= 1'b1;
             end
             OP_POLL: begin
               ident          <= cap[0];
@@ -303,7 +372,9 @@ module fc_cmis_host #(
             present    <= 1'b0;
             ctrl_ok    <= 1'b0;
             tx_ok      <= 1'b0;
+            sq_ok      <= 1'b0;
             deinit_ok  <= 1'b0;
+            as_ok      <= 1'b0;
             lane_ok    <= 1'b0;
             lane_valid <= 1'b0;
           end
@@ -326,9 +397,25 @@ module fc_cmis_host #(
           cmd_wdata <= CMIS_LANE_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
+        end else if (!sq_ok || (tx_squelch != tx_squelch_rb)) begin
+          op        <= OP_PG;
+          nxt       <= OP_RD132;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
         end else if (!deinit_ok || (dp_deinit != dp_deinit_rb)) begin
           op        <= OP_PG;
           nxt       <= OP_RD128;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (!as_ok || (staged_appsel != as_rb)) begin
+          op        <= OP_PG;
+          nxt       <= OP_RD145;
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_LANE_PAGE;
