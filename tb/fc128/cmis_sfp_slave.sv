@@ -11,7 +11,10 @@
 // the module is ModuleReady. OutputDisableTx or OutputSquelchForceTx holds
 // the lane at DPInitialized. A valid ApplyDPInit copies the staged AppSel
 // into the active set and, when the lane is already up, cycles it through
-// DPDeactivated. Temperature is signed 1/256 C at bytes 14-15. Supply is
+// DPDeactivated. Lane-1 FailureFlagTx, LOSFlagTx, CDRLOLFlagTx, LOSFlagRx,
+// and CDRLOLFlagRx latch while the matching input is set and clear on read.
+// Page 10h mask bit 0 gates each one out of the interrupt. IntL is active
+// low. Temperature is signed 1/256 C at bytes 14-15. Supply is
 // unsigned 100 uV at bytes 16-17. The slave does not stretch SCL. sda_oe
 // drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
@@ -28,6 +31,12 @@ module cmis_sfp_slave #(
   input  logic        force_fault,
   input  logic [15:0] temp_s16,
   input  logic [15:0] vcc_u16,
+  input  logic        tx_fail,
+  input  logic        los_tx,
+  input  logic        lol_tx,
+  input  logic        los_rx,
+  input  logic        lol_rx,
+  output logic        int_n,
   output logic [2:0]  mod_state,
   output logic [7:0]  txdis_byte,
   output logic        flag_state,
@@ -62,6 +71,8 @@ module cmis_sfp_slave #(
   logic       mack;
   logic       flag_sc;
   logic       flag_clr;
+  logic       fail_clr, los_tx_clr, lol_tx_clr, los_rx_clr, lol_rx_clr;
+  logic       fail_f, los_tx_f, lol_tx_f, los_rx_f, lol_rx_f;
   logic       sw_hit;
   logic       sw_resetting;
   logic       held;
@@ -90,7 +101,13 @@ module cmis_sfp_slave #(
   wire rise  = !scl_q && scl_i;
   wire fall  = scl_q && !scl_i;
   wire lowpwr_s = mem[CMIS_CTL][4] | (mem[CMIS_CTL][6] & lpmode);
-  wire int_deassert = !(flag_sc && !mem[31][0]);
+  wire lane_hot = (fail_f & ~p10[CMIS_MSK_FAIL][0]) |
+                  (los_tx_f & ~p10[CMIS_MSK_LOSTX][0]) |
+                  (lol_tx_f & ~p10[CMIS_MSK_LOLTX][0]) |
+                  (los_rx_f & ~p10[CMIS_MSK_LOSRX][0]) |
+                  (lol_rx_f & ~p10[CMIS_MSK_LOLRX][0]);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_hot);
+  assign int_n = int_deassert;
 
   assign txdis_byte = p10[CMIS_TXDIS];
   assign flag_state = flag_sc;
@@ -112,6 +129,28 @@ module cmis_sfp_slave #(
       b = peek(a);
       sh <= b;
       sda_oe <= ~b[7];
+    end
+  endtask
+
+  task automatic note_cor;
+    input [7:0] a;
+    begin
+      if (a == 8'd8)
+        flag_clr <= 1'b1;
+      if (mem[CMIS_PAGE] == CMIS_STAT_PAGE) begin
+        if (a == CMIS_DPFLAG)
+          dp_flag_clr <= 1'b1;
+        else if (a == CMIS_FAILTX)
+          fail_clr <= 1'b1;
+        else if (a == CMIS_LOSTX)
+          los_tx_clr <= 1'b1;
+        else if (a == CMIS_LOLTX)
+          lol_tx_clr <= 1'b1;
+        else if (a == CMIS_LOSRX)
+          los_rx_clr <= 1'b1;
+        else if (a == CMIS_LOLRX)
+          lol_rx_clr <= 1'b1;
+      end
     end
   endtask
 
@@ -141,6 +180,16 @@ module cmis_sfp_slave #(
         peek = {7'h0, (dp_q == CMIS_DP_ACT) && !tx_mute};
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_DPFLAG)
         peek = {7'h0, dp_flag};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_FAILTX)
+        peek = {7'h0, fail_f};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_LOSTX)
+        peek = {7'h0, los_tx_f};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_LOLTX)
+        peek = {7'h0, lol_tx_f};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_LOSRX)
+        peek = {7'h0, los_rx_f};
+      else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_LOLRX)
+        peek = {7'h0, lol_rx_f};
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_CFGSTAT)
         peek = {4'h0, cfg_q};
       else if (mem[CMIS_PAGE] == CMIS_STAT_PAGE && a == CMIS_ACS0)
@@ -180,6 +229,11 @@ module cmis_sfp_slave #(
       p10[CMIS_SQFORCE] <= 8'hA0;
       p10[CMIS_DPDEINIT] <= 8'hFF;
       p10[CMIS_SCS0] <= CMIS_APP_128;
+      p10[CMIS_MSK_FAIL] <= 8'hFF;
+      p10[CMIS_MSK_LOSTX] <= 8'hFF;
+      p10[CMIS_MSK_LOLTX] <= 8'hFF;
+      p10[CMIS_MSK_LOSRX] <= 8'hFF;
+      p10[CMIS_MSK_LOLRX] <= 8'hFF;
       st <= S_IDLE;
       sh <= 8'h00;
       bits <= 4'd0;
@@ -192,6 +246,11 @@ module cmis_sfp_slave #(
       sda_oe <= 1'b0;
       flag_clr <= 1'b0;
       dp_flag_clr <= 1'b0;
+      fail_clr <= 1'b0;
+      los_tx_clr <= 1'b0;
+      lol_tx_clr <= 1'b0;
+      los_rx_clr <= 1'b0;
+      lol_rx_clr <= 1'b0;
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
     end else begin
@@ -199,6 +258,11 @@ module cmis_sfp_slave #(
       sda_q <= sda_i;
       flag_clr <= 1'b0;
       dp_flag_clr <= 1'b0;
+      fail_clr <= 1'b0;
+      los_tx_clr <= 1'b0;
+      lol_tx_clr <= 1'b0;
+      los_rx_clr <= 1'b0;
+      lol_rx_clr <= 1'b0;
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       if (!reset_n) begin
@@ -265,10 +329,7 @@ module cmis_sfp_slave #(
             if (fall) begin
               if (reading && (bits == 4'd0)) begin
                 load_tx(ptr);
-                if (ptr == 8'd8)
-                  flag_clr <= 1'b1;
-                if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
-                  dp_flag_clr <= 1'b1;
+                note_cor(ptr);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -300,10 +361,7 @@ module cmis_sfp_slave #(
             else if (fall) begin
               if (!mack) begin
                 load_tx(ptr);
-                if (ptr == 8'd8)
-                  flag_clr <= 1'b1;
-                if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
-                  dp_flag_clr <= 1'b1;
+                note_cor(ptr);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -336,6 +394,11 @@ module cmis_sfp_slave #(
       dp_cnt <= 16'd0;
       flag_sc <= 1'b0;
       dp_flag <= 1'b0;
+      fail_f <= 1'b0;
+      los_tx_f <= 1'b0;
+      lol_tx_f <= 1'b0;
+      los_rx_f <= 1'b0;
+      lol_rx_f <= 1'b0;
       sw_resetting <= 1'b0;
       held <= 1'b0;
       pwr_cnt <= 16'd0;
@@ -356,6 +419,11 @@ module cmis_sfp_slave #(
       init_pend <= 1'b0;
       reinit <= 1'b0;
       dp_flag <= 1'b0;
+      fail_f <= 1'b0;
+      los_tx_f <= 1'b0;
+      lol_tx_f <= 1'b0;
+      los_rx_f <= 1'b0;
+      lol_rx_f <= 1'b0;
     end else begin
       raise_flag = 1'b0;
       if (sw_hit) begin
@@ -366,6 +434,11 @@ module cmis_sfp_slave #(
         active_sel <= CMIS_APP_128;
         init_pend <= 1'b0;
         reinit <= 1'b0;
+        fail_f <= 1'b0;
+        los_tx_f <= 1'b0;
+        lol_tx_f <= 1'b0;
+        los_rx_f <= 1'b0;
+        lol_rx_f <= 1'b0;
       end else if (sw_resetting) begin
         if (pwr_cnt == 16'd0) begin
           sw_resetting <= 1'b0;
@@ -501,6 +574,32 @@ module cmis_sfp_slave #(
       if ((dp_q != dp_prev) && dp_steady(dp_q))
         dp_flag <= 1'b1;
       dp_prev <= dp_q;
+
+      // Level-sensitive while the input is set, and held after it drops
+      // until the host reads the byte. A read while the input is still set
+      // leaves the flag set. Software reset drops the latches.
+      if (!sw_hit) begin
+        if (tx_fail)
+          fail_f <= 1'b1;
+        else if (fail_clr)
+          fail_f <= 1'b0;
+        if (los_tx)
+          los_tx_f <= 1'b1;
+        else if (los_tx_clr)
+          los_tx_f <= 1'b0;
+        if (lol_tx)
+          lol_tx_f <= 1'b1;
+        else if (lol_tx_clr)
+          lol_tx_f <= 1'b0;
+        if (los_rx)
+          los_rx_f <= 1'b1;
+        else if (los_rx_clr)
+          los_rx_f <= 1'b0;
+        if (lol_rx)
+          lol_rx_f <= 1'b1;
+        else if (lol_rx_clr)
+          lol_rx_f <= 1'b0;
+      end
     end
   end
 endmodule

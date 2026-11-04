@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // CMIS 5.0 host against a behavioral SFP112: power-up, low power, software
 // reset, lane-1 OutputDisableTx, the data path, forced squelch, staged
-// AppSel, module fault, and an absent module.
+// AppSel, lane flags and IntL, module fault, and an absent module.
 module tb_fc_cmis;
   `include "fc_cmis.vh"
 
@@ -17,6 +17,16 @@ module tb_fc_cmis;
   logic dp_deinit = 0;
   logic [7:0] staged = 8'h10;
   logic apply_p = 0;
+  logic mask_fail = 1;
+  logic mask_los_tx = 1;
+  logic mask_lol_tx = 1;
+  logic mask_los_rx = 1;
+  logic mask_lol_rx = 1;
+  logic tx_fail = 0;
+  logic los_tx = 0;
+  logic lol_tx = 0;
+  logic los_rx = 0;
+  logic lol_rx = 0;
   logic mod_prs_n = 0;
   logic lpmode = 0;
   logic reset_n = 1;
@@ -30,7 +40,8 @@ module tb_fc_cmis;
   logic [7:0] active_h, active_s, squelch_byte;
   logic [3:0] dp_rb, slave_dp, cfg_h, cfg_s;
   logic [2:0] mod_state, slave_state;
-  logic int_deasserted, flag_state;
+  logic int_deasserted, flag_state, int_n;
+  logic flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx;
   logic [15:0] temp_rb, vcc_rb;
   logic scl_oe, sda_oe, sda_slave;
   wire scl_i = ~scl_oe;
@@ -42,6 +53,9 @@ module tb_fc_cmis;
     .sw_reset_pulse(sw_pulse), .tx_disable(tx_disable),
     .tx_squelch(tx_squelch), .dp_deinit(dp_deinit),
     .staged_appsel(staged), .apply_pulse(apply_p),
+    .mask_fail(mask_fail), .mask_los_tx(mask_los_tx),
+    .mask_lol_tx(mask_lol_tx), .mask_los_rx(mask_los_rx),
+    .mask_lol_rx(mask_lol_rx),
     .mod_prs_n(mod_prs_n),
     .busy(busy), .present(present), .nack(nack), .armed(armed),
     .low_pwr_rb(low_pwr_rb), .tx_disable_rb(tx_disable_rb),
@@ -50,6 +64,9 @@ module tb_fc_cmis;
     .config_status(cfg_h), .active_appsel(active_h),
     .dp_init_pend(dp_pend), .out_status_rx(out_rx), .out_status_tx(out_tx),
     .dp_flag(dp_flag_h), .dp_valid(dp_valid),
+    .flag_fail(flag_fail), .flag_los_tx(flag_los_tx),
+    .flag_lol_tx(flag_lol_tx), .flag_los_rx(flag_los_rx),
+    .flag_lol_rx(flag_lol_rx),
     .ident(ident), .rev(rev), .mod_state(mod_state),
     .int_deasserted(int_deasserted),
     .flag0(flag0), .flag1(flag1), .flag2(flag2), .flag3(flag3),
@@ -62,6 +79,8 @@ module tb_fc_cmis;
     .scl_i(scl_i), .sda_i(sda_i), .sda_oe(sda_slave),
     .lpmode(lpmode), .reset_n(reset_n), .force_fault(force_fault),
     .temp_s16(temp_s16), .vcc_u16(vcc_u16),
+    .tx_fail(tx_fail), .los_tx(los_tx), .lol_tx(lol_tx),
+    .los_rx(los_rx), .lol_rx(lol_rx), .int_n(int_n),
     .mod_state(slave_state), .txdis_byte(txdis_byte), .flag_state(flag_state),
     .dp_state(slave_dp), .dpdeinit_byte(dpdeinit_byte),
     .config_status(cfg_s), .active_appsel(active_s),
@@ -364,6 +383,112 @@ module tb_fc_cmis;
       end
       $display("FAIL explicit cfg %h act %h down %b dp %h",
                cfg_h, active_h, saw_down, slave_dp);
+      errors = errors + 1;
+    end
+
+    tx_fail = 1;
+    los_tx = 1;
+    lol_tx = 1;
+    los_rx = 1;
+    lol_rx = 1;
+    begin : fl_set
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_fail && flag_los_tx && flag_lol_tx && flag_los_rx && flag_lol_rx &&
+            int_deasserted && int_n && !busy)
+          disable fl_set;
+      end
+      $display("FAIL flags set %b%b%b%b%b int %b pin %b",
+               flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx,
+               int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    tx_fail = 0;
+    los_tx = 0;
+    lol_tx = 0;
+    los_rx = 0;
+    lol_rx = 0;
+    begin : fl_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!flag_fail && !flag_los_tx && !flag_lol_tx && !flag_los_rx &&
+            !flag_lol_rx && int_deasserted && int_n && !busy)
+          disable fl_clr;
+      end
+      $display("FAIL flags clear %b%b%b%b%b",
+               flag_fail, flag_los_tx, flag_lol_tx, flag_los_rx, flag_lol_rx);
+      errors = errors + 1;
+    end
+
+    @(negedge clk);
+    los_tx = 1;
+    repeat (8) @(posedge clk);
+    @(negedge clk);
+    los_tx = 0;
+    begin : fl_pulse
+      integer k;
+      reg saw;
+      saw = 0;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_los_tx)
+          saw = 1;
+        if (saw && !flag_los_tx && int_deasserted && !busy)
+          disable fl_pulse;
+      end
+      $display("FAIL los pulse saw %b flag %b", saw, flag_los_tx);
+      errors = errors + 1;
+    end
+
+    mask_los_rx = 0;
+    begin : mk_rx
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.p10[CMIS_MSK_LOSRX] == 8'hFE &&
+            mod.p10[CMIS_MSK_FAIL] == 8'hFF &&
+            mod.p10[CMIS_MSK_LOSTX] == 8'hFF &&
+            mod.p10[CMIS_MSK_LOLTX] == 8'hFF &&
+            mod.p10[CMIS_MSK_LOLRX] == 8'hFF && !busy)
+          disable mk_rx;
+      end
+      $display("FAIL mask rx %h %h", mod.p10[CMIS_MSK_LOSRX], mod.p10[CMIS_MSK_FAIL]);
+      errors = errors + 1;
+    end
+    los_rx = 1;
+    begin : fl_int
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (flag_los_rx && !flag_los_tx && !int_deasserted && !int_n && !busy)
+          disable fl_int;
+      end
+      $display("FAIL los int flag %b int %b pin %b", flag_los_rx, int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    los_rx = 0;
+    begin : fl_int_clr
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (!flag_los_rx && int_deasserted && int_n && !busy)
+          disable fl_int_clr;
+      end
+      $display("FAIL los int clear flag %b int %b pin %b",
+               flag_los_rx, int_deasserted, int_n);
+      errors = errors + 1;
+    end
+    mask_los_rx = 1;
+    begin : mk_back
+      integer k;
+      for (k = 0; k < 400000; k = k + 1) begin
+        @(posedge clk);
+        if (mod.p10[CMIS_MSK_LOSRX] == 8'hFF && !busy)
+          disable mk_back;
+      end
+      $display("FAIL mask restore %h", mod.p10[CMIS_MSK_LOSRX]);
       errors = errors + 1;
     end
 
