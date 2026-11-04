@@ -455,6 +455,11 @@ module tb_fc128_bridge;
       $display("FAIL cmis opt flags reset %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h310, rdw);
+    if (rdw !== 32'h0000_00FF) begin
+      $display("FAIL cmis module mask %h", rdw);
+      errors = errors + 1;
+    end
     csr_read_t(12'h204, rdw);
     if (rdw !== 32'h0188_0000) begin
       $display("FAIL cmis status %h", rdw);
@@ -917,6 +922,52 @@ module tb_fc128_bridge;
       errors = errors + 1;
     end
     csr_write_t(12'h30C, 32'h0000_0FFF);
+    cmis_temp = 16'd19201;
+    begin : cmis_temp_ha
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[15:8] == 8'hA0 && sfp_int_n) begin
+          csr_read_t(12'h208, rdw);
+          if (rdw[15:0] == 16'd19201)
+            disable cmis_temp_ha;
+        end
+      end
+      $display("FAIL cmis temp alarm %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h310, 32'h0000_007F);
+    begin : cmis_temp_int
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h310, rdw);
+        if (rdw[7:0] == 8'h7F) begin
+          csr_read_t(12'h20C, rdw);
+          if (rdw[15] && !sfp_int_n) begin
+            csr_read_t(12'h204, rdw);
+            if (!rdw[24] && !rdw[19])
+              disable cmis_temp_int;
+          end
+        end
+      end
+      $display("FAIL cmis temp int %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    cmis_temp = 16'h2880;
+    begin : cmis_temp_clr
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h20C, rdw);
+        if (rdw[15:8] == 8'h00 && sfp_int_n)
+          disable cmis_temp_clr;
+      end
+      $display("FAIL cmis temp clear %h int %b", rdw, sfp_int_n);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h310, 32'h0000_00FF);
     csr_write_t(12'h200, 32'h0000_0023);
     begin : cmis_lp
       integer k;

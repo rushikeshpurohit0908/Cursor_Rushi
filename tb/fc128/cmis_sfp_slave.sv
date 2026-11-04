@@ -20,7 +20,10 @@
 // is the monitor greater than the fixed threshold. A low flag is the
 // monitor less than it. The flag stays set while the comparison is true
 // and holds a pulse until that byte is read. Page 10h bytes 218-225 and
-// 228-231 bit 0 mask those flags and power up at FFh. One data
+// 228-231 bit 0 mask those flags and power up at FFh. Lower byte 9 is
+// the module temperature and supply threshold flags. Temperature is a
+// signed compare and supply is unsigned. Lower byte 32 masks that byte
+// and powers up at FFh. A read of byte 9 clears the flags. One data
 // path, lane 1, follows Figure 6-5 with
 // SteppedConfigOnly = 0. ModuleReady and DPDeinit clear run the path up.
 // A successful ApplyDPInit copies the staged byte, sets DPInitPending, and
@@ -92,8 +95,10 @@ module cmis_sfp_slave #(
   logic       dp_flag_clr;
   logic [4:0] lane_clr;
   logic [11:0] opt_clr;
+  logic [7:0]  mon_clr;
   logic       f_fail_tx, f_los_tx, f_lol_tx, f_los_rx, f_lol_rx;
   logic [11:0] f_opt;
+  logic [7:0]  f_mod;
   logic       sw_resetting;
   logic       held;
   logic       raise_flag;
@@ -138,7 +143,8 @@ module cmis_sfp_slave #(
                  (f_opt[9]  && !p10[CMIS_M_RXLA][0]) ||
                  (f_opt[10] && !p10[CMIS_M_RXHW][0]) ||
                  (f_opt[11] && !p10[CMIS_M_RXLW][0]);
-  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int || opt_int);
+  wire mon_int = |(f_mod & ~mem[CMIS_MONMSK]);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int || opt_int || mon_int);
   assign int_n = int_deassert;
 
   function automatic [4:0] lane_clr_of(input [7:0] a, input [7:0] page);
@@ -179,6 +185,16 @@ module cmis_sfp_slave #(
     end
   endfunction
 
+  // Byte 9: {Temp HA, Temp LA, Temp HW, Temp LW, Vcc HA, Vcc LA, Vcc HW, Vcc LW}.
+  // Temperature is signed 1/256 C. A negative reading must not look like
+  // a high alarm. Supply is an unsigned 100 uV count.
+  wire signed [15:0] temp_cmp = $signed(temp_s16);
+  wire [7:0] mon_lvl = {
+    temp_cmp > $signed(CMIS_TEMP_HA), temp_cmp < $signed(CMIS_TEMP_LA),
+    temp_cmp > $signed(CMIS_TEMP_HW), temp_cmp < $signed(CMIS_TEMP_LW),
+    vcc_u16 > CMIS_VCC_HA, vcc_u16 < CMIS_VCC_LA,
+    vcc_u16 > CMIS_VCC_HW, vcc_u16 < CMIS_VCC_LW
+  };
   wire [11:0] opt_lvl = {
     opt_rx_u16 < CMIS_RX_LW, opt_rx_u16 > CMIS_RX_HW,
     opt_rx_u16 < CMIS_RX_LA, opt_rx_u16 > CMIS_RX_HA,
@@ -225,6 +241,8 @@ module cmis_sfp_slave #(
         peek = {4'b0, (force_fault ? CMIS_ST_FLT : (sw_resetting ? CMIS_ST_LOW : mod_state_q)), int_deassert};
       else if (a == 8'd8)
         peek = {7'b0, flag_sc};
+      else if (a == CMIS_MONFLG)
+        peek = f_mod;
       else if (a == 8'd14)
         peek = temp_s16[15:8];
       else if (a == 8'd15)
@@ -316,6 +334,7 @@ module cmis_sfp_slave #(
       mem[2] <= 8'h00;
       mem[CMIS_CTL] <= 8'h40;
       mem[31] <= 8'hFF;
+      mem[CMIS_MONMSK] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE + 0] <= CMIS_H_128;
       mem[CMIS_APP_BASE + 1] <= CMIS_M_128;
@@ -366,6 +385,7 @@ module cmis_sfp_slave #(
       dp_flag_clr <= 1'b0;
       lane_clr <= 5'h00;
       opt_clr <= 12'h000;
+      mon_clr <= 8'h00;
     end else begin
       scl_q <= scl_i;
       sda_q <= sda_i;
@@ -375,6 +395,7 @@ module cmis_sfp_slave #(
       dp_flag_clr <= 1'b0;
       lane_clr <= 5'h00;
       opt_clr <= 12'h000;
+      mon_clr <= 8'h00;
       if (!reset_n) begin
         st <= S_IDLE;
         sda_oe <= 1'b0;
@@ -441,6 +462,8 @@ module cmis_sfp_slave #(
                 load_tx(ptr);
                 if (ptr == 8'd8)
                   flag_clr <= 1'b1;
+                if (ptr == CMIS_MONFLG)
+                  mon_clr <= 8'hFF;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
@@ -478,6 +501,8 @@ module cmis_sfp_slave #(
                 load_tx(ptr);
                 if (ptr == 8'd8)
                   flag_clr <= 1'b1;
+                if (ptr == CMIS_MONFLG)
+                  mon_clr <= 8'hFF;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
@@ -743,6 +768,18 @@ module cmis_sfp_slave #(
     end else begin
       for (oi = 0; oi < 12; oi = oi + 1)
         f_opt[oi] <= opt_lvl[oi] || (f_opt[oi] && !opt_clr[oi]);
+    end
+  end
+
+  // Same latch as the lane flags. Byte 9 holds all eight, so one read
+  // clears the set whose comparison is no longer true.
+  integer mi;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      f_mod <= 8'h00;
+    end else begin
+      for (mi = 0; mi < 8; mi = mi + 1)
+        f_mod[mi] <= mon_lvl[mi] || (f_mod[mi] && !mon_clr[mi]);
     end
   end
 endmodule
