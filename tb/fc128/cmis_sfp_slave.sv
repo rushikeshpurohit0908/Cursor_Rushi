@@ -25,7 +25,11 @@
 // unsigned 100 uV at bytes 16-17. Byte 9 latches the module temperature
 // and supply alarm/warning flags against the page 02h thresholds. A read
 // clears a latch whose comparison is no longer true. Byte 32 masks those
-// flags out of IntL and powers up at FFh. The slave does not stretch SCL. sda_oe
+// flags out of IntL and powers up at FFh. Byte 8 bit 0 is
+// ModuleStateChangedFlag. It is set on entry to ModuleLowPwr, ModuleReady,
+// or ModuleFault, unless that state is left immediately, and a read clears
+// it. ModulePwrUp and ModulePwrDn do not set it. Byte 31 bit 0 masks it
+// out of IntL and powers up at 1. The slave does not stretch SCL. sda_oe
 // drives a zero on the open-drain pad.
 module cmis_sfp_slave #(
   parameter int PWR_DLY = 40,
@@ -151,7 +155,7 @@ module cmis_sfp_slave #(
                   (los_rx_f & ~p10[CMIS_MSK_LOSRX][0]) |
                   (lol_rx_f & ~p10[CMIS_MSK_LOLRX][0]) |
                   |(alm_f & ~alm_msk);
-  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_hot || mon_hot);
+  wire int_deassert = !((flag_sc && !mem[CMIS_MSK_SC][0]) || lane_hot || mon_hot);
   assign int_n = int_deassert;
 
   assign txdis_byte = p10[CMIS_TXDIS];
@@ -180,7 +184,7 @@ module cmis_sfp_slave #(
   task automatic note_cor;
     input [7:0] a;
     begin
-      if (a == 8'd8)
+      if (a == CMIS_MOD_FLG)
         flag_clr <= 1'b1;
       if (a == CMIS_MON_FLG)
         mon_clr <= 1'b1;
@@ -268,7 +272,7 @@ module cmis_sfp_slave #(
     begin
       if (a == 8'd3)
         peek = {4'b0, (force_fault ? CMIS_ST_FLT : (sw_resetting ? CMIS_ST_LOW : mod_state_q)), int_deassert};
-      else if (a == 8'd8)
+      else if (a == CMIS_MOD_FLG)
         peek = {7'b0, flag_sc};
       else if (a == CMIS_MON_FLG)
         peek = mon_f;
@@ -343,7 +347,7 @@ module cmis_sfp_slave #(
       mem[1] <= CMIS_REV50;
       mem[2] <= 8'h00;
       mem[CMIS_CTL] <= 8'h40;
-      mem[31] <= 8'hFF;
+      mem[CMIS_MSK_SC] <= 8'hFF;
       mem[CMIS_MSK_MON] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE]     <= CMIS_H_128;
@@ -600,18 +604,22 @@ module cmis_sfp_slave #(
         if (pwr_cnt == 16'd0) begin
           sw_resetting <= 1'b0;
           mod_state_q <= CMIS_ST_LOW;
-          raise_flag = 1'b1;
+          // LowPwrS already false means this state is left at once.
+          raise_flag = lowpwr_s;
         end else begin
           pwr_cnt <= pwr_cnt - 16'd1;
         end
       end else if (force_fault) begin
+        if (mod_state_q != CMIS_ST_FLT)
+          raise_flag = 1'b1;
         mod_state_q <= CMIS_ST_FLT;
       end else if (held) begin
         held <= 1'b0;
-        raise_flag = 1'b1;
+        raise_flag = lowpwr_s;
         mod_state_q <= CMIS_ST_LOW;
       end else if (mod_state_q == CMIS_ST_FLT) begin
         mod_state_q <= CMIS_ST_LOW;
+        raise_flag = lowpwr_s;
       end else begin
         case (mod_state_q)
           CMIS_ST_LOW: begin
@@ -623,7 +631,8 @@ module cmis_sfp_slave #(
           CMIS_ST_UP: begin
             if (pwr_cnt == 16'd0) begin
               mod_state_q <= CMIS_ST_RDY;
-              raise_flag = 1'b1;
+              // LowPwrExS is LowPwrS with every data path already down.
+              raise_flag = !(lowpwr_s && (dp_q == CMIS_DP_DEACT));
             end else begin
               pwr_cnt <= pwr_cnt - 16'd1;
             end
@@ -637,7 +646,7 @@ module cmis_sfp_slave #(
           CMIS_ST_DN: begin
             if (pwr_cnt == 16'd0) begin
               mod_state_q <= CMIS_ST_LOW;
-              raise_flag = 1'b1;
+              raise_flag = lowpwr_s;
             end else begin
               pwr_cnt <= pwr_cnt - 16'd1;
             end

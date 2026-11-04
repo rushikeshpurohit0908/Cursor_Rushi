@@ -26,8 +26,10 @@
 // monitors. `0x308 + 32*port` reports them, and `0x30C + 32*port` is the
 // mask (1 masks the flag, reset `12'hFFF`). Lower byte 9 is the module
 // temperature and supply alarm/warning flags. Those eight bits are already
-// in the module-flag register at +0x0C, bits [15:8]. `0x310 + 32*port` is
-// the byte 32 mask, reset to `8'hFF`. An unmasked flag pulls IntL low. The staged
+// in the module-flag register at +0x0C, bits [15:8]. Bit 0 of that register
+// is ModuleStateChangedFlag, lower byte 8. `0x310 + 32*port` is the byte 32
+// mask, reset to `8'hFF`. `0x314 + 32*port` bit 0 is ModuleStateChangedMask,
+// reset to 1. An unmasked flag pulls IntL low. The staged
 // AppSel byte is written at +0x1C; the read side returns that request, the
 // active AppSel, and ConfigStatus. The line rate for that port is at +0x18:
 // 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 is set while that write is
@@ -177,6 +179,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0]       cmis_mlol_rx;
   logic [N_CLIENT-1:0][11:0] cmis_malm;
   logic [N_CLIENT-1:0][7:0]  cmis_mmon;
+  logic [N_CLIENT-1:0]       cmis_msc;
   logic [N_CLIENT-1:0][11:0] cmis_falm;
   logic [N_CLIENT-1:0]       cmis_dpdis;
   logic [N_CLIENT-1:0]       cmis_rstn;
@@ -324,6 +327,7 @@ module fc128_bridge_top #(
         .mask_lol_rx(cmis_mlol_rx[gi]),
         .mask_alm(cmis_malm[gi]),
         .mask_mon(cmis_mmon[gi]),
+        .mask_sc(cmis_msc[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -397,6 +401,7 @@ module fc128_bridge_top #(
       cmis_mlol_rx <= {N_CLIENT{1'b1}};
       cmis_malm    <= {N_CLIENT{12'hFFF}};
       cmis_mmon    <= {N_CLIENT{8'hFF}};
+      cmis_msc     <= {N_CLIENT{1'b1}};
       cmis_dpdis <= '0;
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
@@ -441,6 +446,9 @@ module fc128_bridge_top #(
       end else if (csr_write && csr_addr[11:8] == 4'h3 && csr_addr[4:2] == 3'd4 &&
                    csr_addr[7:5] < N_CLIENT) begin
         cmis_mmon[csr_addr[7:5]] <= csr_wdata[7:0];
+      end else if (csr_write && csr_addr[11:8] == 4'h3 && csr_addr[4:2] == 3'd5 &&
+                   csr_addr[7:5] < N_CLIENT) begin
+        cmis_msc[csr_addr[7:5]] <= csr_wdata[0];
       end else if (csr_write) begin
         case (csr_addr)
           12'h008: begin
@@ -536,6 +544,7 @@ module fc128_bridge_top #(
             3'd2: rdata_mux = {20'h0, cmis_falm[port_idx]};
             3'd3: rdata_mux = {20'h0, cmis_malm[port_idx]};
             3'd4: rdata_mux = {24'h0, cmis_mmon[port_idx]};
+            3'd5: rdata_mux = {31'h0, cmis_msc[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

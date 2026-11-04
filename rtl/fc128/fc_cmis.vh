@@ -36,6 +36,13 @@
 // threshold (bytes 128-143, Table 8-40) and a low flag is the monitor less
 // than it. Byte 32 is the matching mask. A read of byte 9 clears a latch
 // whose comparison is no longer true.
+// Lower byte 8 bit 0 is ModuleStateChangedFlag (Table 8-8). Table 6-9 sets
+// it on entry to ModuleLowPwr, ModuleReady, and ModuleFault, and suppresses
+// it when that state's exit condition is already true. ModulePwrUp and
+// ModulePwrDn do not set it. A read of byte 8 clears it. It does not stay
+// set just because the module remains in the new state. Byte 31 bit 0 is
+// ModuleStateChangedMask (Table 8-11). Bits [7:1] of that byte are left as
+// the module set them.
 // Lanes in the map are numbered from 1.
 // Lower bytes 86-97 advertise three one-lane applications. Host interface
 // IDs are SFF-8024 Table 4-5. Media IDs are the single-mode Fibre Channel
@@ -66,7 +73,9 @@ localparam [7:0] CMIS_LOSTX    = 8'd136;
 localparam [7:0] CMIS_LOLTX    = 8'd137;
 localparam [7:0] CMIS_ALM_TX   = 8'd139;
 localparam [7:0] CMIS_ALM_RX   = 8'd149;
+localparam [7:0] CMIS_MOD_FLG  = 8'd8;
 localparam [7:0] CMIS_MON_FLG  = 8'd9;
+localparam [7:0] CMIS_MSK_SC   = 8'd31;
 localparam [7:0] CMIS_MSK_MON  = 8'd32;
 localparam [7:0] CMIS_LOSRX    = 8'd147;
 localparam [7:0] CMIS_LOLRX    = 8'd148;
