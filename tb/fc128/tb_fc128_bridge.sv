@@ -418,28 +418,52 @@ module tb_fc128_bridge;
     end
     csr_write_t(12'h218, 32'h0000_0002);
     csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0000_0002) begin
+    if (rdw[1:0] !== 2'b10 || (rdw & 32'hFFFF_FFEC) !== 32'h0) begin
       $display("FAIL rate 32 %h", rdw);
       errors = errors + 1;
     end
     csr_write_t(12'h238, 32'h0000_0001);
     csr_read_t(12'h238, rdw);
-    if (rdw !== 32'h0000_0001) begin
+    if (rdw[1:0] !== 2'b01 || (rdw & 32'hFFFF_FFEC) !== 32'h0) begin
       $display("FAIL rate port1 %h", rdw);
       errors = errors + 1;
     end
     csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0000_0002) begin
+    if (rdw[1:0] !== 2'b10 || (rdw & 32'hFFFF_FFEC) !== 32'h0) begin
       $display("FAIL rate port0 clobber %h", rdw);
       errors = errors + 1;
     end
     csr_write_t(12'h218, 32'h0000_0003);
     csr_read_t(12'h218, rdw);
-    if (rdw !== 32'h0) begin
+    if (rdw[1:0] !== 2'b00 || (rdw & 32'hFFFF_FFEC) !== 32'h0) begin
       $display("FAIL rate reserved %h", rdw);
       errors = errors + 1;
     end
     csr_write_t(12'h238, 32'h0);
+    // Bit 4 stays set until the shaper and lane FIFOs have taken the new rate.
+    begin : rate_settle
+      integer spins;
+      spins = 0;
+      rdw = 32'h10;
+      while ((rdw[4] || rdw[1:0] != 2'b00) && spins < 4000) begin
+        csr_read_t(12'h218, rdw);
+        spins = spins + 1;
+      end
+      if (rdw !== 32'h0) begin
+        $display("FAIL rate settle %h", rdw);
+        errors = errors + 1;
+      end
+      spins = 0;
+      rdw = 32'h10;
+      while ((rdw[4] || rdw[1:0] != 2'b00) && spins < 4000) begin
+        csr_read_t(12'h238, rdw);
+        spins = spins + 1;
+      end
+      if (rdw !== 32'h0) begin
+        $display("FAIL rate port1 settle %h", rdw);
+        errors = errors + 1;
+      end
+    end
 
     // System lanes carry 256b/257b. The client port stays a 66-bit block.
     csr_write_t(12'h008, 32'h0000_002A);

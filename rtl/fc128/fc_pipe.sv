@@ -37,7 +37,9 @@ module fc_pipe #(
   output logic [31:0] stat_tx_frames,
   output logic [31:0] stat_crc_err,
   output logic [31:0] stat_fec_corr,
-  output logic [31:0] stat_fec_fail
+  output logic [31:0] stat_fec_fail,
+  // Transmit is between frames, so a rate change can retune the gearbox.
+  output logic        tx_quiet
 );
   `include "fc128_defs.vh"
   `include "fc_crc.vh"
@@ -108,6 +110,7 @@ module fc_pipe #(
   wire [7:0] byte_wr = lat_data[lat_sel*8 +: 8];
 
   assign tx_fire = tx_valid && tx_ready;
+  assign tx_quiet = (tx_state == TS_FLOW) && !in_frame;
   assign rx_ready = port_en && (
     !locked ||
     (rx_state == RX_FRM) ||

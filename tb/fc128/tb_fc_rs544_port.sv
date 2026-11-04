@@ -51,7 +51,8 @@ module tb_fc_rs544_port;
     .stat_fec_fail(stat_fec_fail),
     .stat_rs544_corr(stat_rs544_corr), .stat_rs544_fail(stat_rs544_fail),
     .client_link_up(client_link_up), .system_link_up(system_link_up),
-    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked)
+    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked),
+    .rate_busy()
   );
 
   assign client_tx_ready = 1'b1;

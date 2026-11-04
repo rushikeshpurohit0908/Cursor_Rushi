@@ -16,6 +16,8 @@
 // window is 0x200 + 32*port. LPMode and ResetL are cage pins. Control bit 6
 // is DPDeinit for lane 1. Page 11h data-path state is at +0x14. The line
 // rate for that port is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC.
+// Bit 4 is set while that write is being applied. The link drops and
+// returns on the new rate; the gearbox is not switched in place.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -176,6 +178,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][15:0] cmis_vcc;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
+  logic [N_CLIENT-1:0]      port_rate_busy;
 
   logic [2*N_CLIENT-1:0]       port_sys_rx_valid;
   logic [2*N_CLIENT-1:0]       port_sys_rx_ready;
@@ -250,7 +253,8 @@ module fc128_bridge_top #(
         .system_link_up  (p_system_up[gi]),
         .client_ls       (p_client_ls[gi]),
         .system_ls       (p_system_ls[gi]),
-        .sys_locked      (p_sys_lock[gi])
+        .sys_locked      (p_sys_lock[gi]),
+        .rate_busy       (port_rate_busy[gi])
       );
 
       // Secondary 58G bank. Protect mode mirrors the even lane of the pair
@@ -411,7 +415,8 @@ module fc128_bridge_top #(
                                cmis_lp_rb[port_idx]};
             3'd5: rdata_mux = {26'h0, cmis_dp_act[port_idx], cmis_dp_rb[port_idx],
                                cmis_dp_st[port_idx]};
-            3'd6: rdata_mux = {30'h0, port_rate[port_idx]};
+            3'd6: rdata_mux = {27'h0, port_rate_busy[port_idx], 2'b00,
+                               port_rate[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end
