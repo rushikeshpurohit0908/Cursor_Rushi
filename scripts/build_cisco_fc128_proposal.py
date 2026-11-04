@@ -261,7 +261,7 @@ def build(out_path: Path):
         Inches(11.5),
         Inches(0.8),
         "Single-chip 8-port 128GFC datapath: FHT client SerDes to 116G PAM4,\n"
-        "FGT system fabric at 58G PAM4 — bandwidth-matched gearbox for Cisco ASIC attach.",
+        "FGT system fabric at 58G PAM4 — with Altera Search IP (TCAM / BCAM / MBL) classify ahead of the gearbox.",
         size=14,
         color=DARK,
     )
@@ -369,74 +369,89 @@ def build(out_path: Path):
     page += 1
     s = blank_slide(prs)
     header_bar(s, "Architecture · Datapath")
-    title_block(s, "8×112G client ↔ 16×58G system gearbox", "AGM039 soft logic + F-Tile SerDes")
+    title_block(s, "8×112G client ↔ 16×58G system gearbox", "AGM039 soft logic + F-Tile SerDes · Search IP ahead of gearbox")
 
-    # Client box
-    add_rounded(s, Inches(0.4), Inches(1.55), Inches(3.2), Inches(2.6), LIGHT_BG)
-    add_rect(s, Inches(0.4), Inches(1.55), Inches(3.2), Inches(0.45), CLIENT)
-    add_text_box(s, Inches(0.55), Inches(1.6), Inches(2.9), Inches(0.35), "CLIENT — FHT", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
-    add_bullets(
-        s,
-        Inches(0.55),
-        Inches(2.15),
-        Inches(2.9),
-        Inches(1.8),
-        ["8 × 112G PAM4", "128GFC ports 0–7", "SFP112 / onboard", "PCS + RS-FEC"],
-        size=12,
-        space=4,
-    )
+    arch_png = ASSET_DIR / "architecture_diagram.png"
+    src_png = ROOT / "proposal" / "cisco_fc128" / "architecture.png"
+    if not arch_png.exists() and src_png.exists():
+        try:
+            from PIL import Image
 
-    # FPGA center
-    add_rounded(s, Inches(4.0), Inches(1.55), Inches(5.3), Inches(2.6), LIGHT_BG)
-    add_rect(s, Inches(4.0), Inches(1.55), Inches(5.3), Inches(0.45), NAVY)
-    add_text_box(s, Inches(4.15), Inches(1.6), Inches(5.0), Inches(0.35), "AGILEX 7 AGM039 (R47)", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
-    add_bullets(
-        s,
-        Inches(4.15),
-        Inches(2.15),
-        Inches(5.0),
-        Inches(1.8),
-        ["FC framing · credit · link init", "Search IP: TCAM / BCAM / MBL", "Gearbox / lane stripe / rate-match", "Stats · CMIS · optional HBM / DDR5"],
-        size=12,
-        space=4,
-    )
-
-    # System box
-    add_rounded(s, Inches(9.7), Inches(1.55), Inches(3.2), Inches(2.6), LIGHT_BG)
-    add_rect(s, Inches(9.7), Inches(1.55), Inches(3.2), Inches(0.45), SYSTEM)
-    add_text_box(s, Inches(9.85), Inches(1.6), Inches(2.9), Inches(0.35), "SYSTEM — FGT", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
-    add_bullets(
-        s,
-        Inches(9.85),
-        Inches(2.15),
-        Inches(2.9),
-        Inches(1.8),
-        ["16 × 58G primary", "8 × 58G secondary", "Cisco ASIC attach", "Raw or PCS mode"],
-        size=12,
-        space=4,
-    )
-
-    # Arrows as text labels
-    add_text_box(s, Inches(3.5), Inches(2.5), Inches(0.55), Inches(0.4), "→", size=22, bold=True, color=ALTERA_BLUE, align=PP_ALIGN.CENTER)
-    add_text_box(s, Inches(9.2), Inches(2.5), Inches(0.55), Inches(0.4), "→", size=22, bold=True, color=ALTERA_BLUE, align=PP_ALIGN.CENTER)
-
-    add_rect(s, Inches(0.4), Inches(4.4), Inches(12.5), Inches(2.4), LIGHT_BG)
-    add_text_box(s, Inches(0.65), Inches(4.55), Inches(12), Inches(0.35), "FPGA soft + hardened functions", size=14, bold=True, color=NAVY)
-    add_bullets(
-        s,
-        Inches(0.65),
-        Inches(5.0),
-        Inches(12),
-        Inches(1.6),
-        [
-            "128GFC PMA/PCS at 112.2G PAM4 with equalization and CDR on FHT",
-            "Mandatory RS-FEC encode/decode; FC framing, R_RDY / BB_Credit, link initialization",
-            "Altera Search IP classify (TCAM/BCAM/MBL) ahead of 8×112G ↔ 16×58G gearbox",
-            "Management: CMIS for SFP112, counters, SEU scrubbing; optional PCIe 5.0/CXL on R47A",
-        ],
-        size=13,
-        space=3,
-    )
+            ASSET_DIR.mkdir(parents=True, exist_ok=True)
+            with Image.open(src_png) as im:
+                # Drop embedded title/footer so slide chrome owns chrome
+                im.crop((20, 58, im.width - 20, 595)).save(arch_png)
+        except Exception:
+            arch_png = src_png
+    if not arch_png.exists():
+        arch_png = src_png
+    if arch_png.exists():
+        # Cropped diagram ~1160×537 → ~11.5" × 5.32" under title / above footer
+        arch_w_in = 11.5
+        s.shapes.add_picture(
+            str(arch_png),
+            Inches((13.333 - arch_w_in) / 2),
+            Inches(1.45),
+            width=Inches(arch_w_in),
+        )
+    else:
+        # Fallback card layout when diagram asset is missing
+        add_rounded(s, Inches(0.4), Inches(1.55), Inches(3.2), Inches(2.6), LIGHT_BG)
+        add_rect(s, Inches(0.4), Inches(1.55), Inches(3.2), Inches(0.45), CLIENT)
+        add_text_box(s, Inches(0.55), Inches(1.6), Inches(2.9), Inches(0.35), "CLIENT — FHT", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+        add_bullets(
+            s,
+            Inches(0.55),
+            Inches(2.15),
+            Inches(2.9),
+            Inches(1.8),
+            ["8 × 112G PAM4", "128GFC ports 0–7", "SFP112 / onboard", "PCS + RS-FEC"],
+            size=12,
+            space=4,
+        )
+        add_rounded(s, Inches(4.0), Inches(1.55), Inches(5.3), Inches(2.6), LIGHT_BG)
+        add_rect(s, Inches(4.0), Inches(1.55), Inches(5.3), Inches(0.45), NAVY)
+        add_text_box(s, Inches(4.15), Inches(1.6), Inches(5.0), Inches(0.35), "AGILEX 7 AGM039 (R47)", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+        add_bullets(
+            s,
+            Inches(4.15),
+            Inches(2.15),
+            Inches(5.0),
+            Inches(1.8),
+            ["FC framing · credit · link init", "Search IP: TCAM / BCAM / MBL", "Gearbox / lane stripe / rate-match", "Stats · CMIS · optional HBM / DDR5"],
+            size=12,
+            space=4,
+        )
+        add_rounded(s, Inches(9.7), Inches(1.55), Inches(3.2), Inches(2.6), LIGHT_BG)
+        add_rect(s, Inches(9.7), Inches(1.55), Inches(3.2), Inches(0.45), SYSTEM)
+        add_text_box(s, Inches(9.85), Inches(1.6), Inches(2.9), Inches(0.35), "SYSTEM — FGT", size=14, bold=True, color=WHITE, anchor=MSO_ANCHOR.MIDDLE)
+        add_bullets(
+            s,
+            Inches(9.85),
+            Inches(2.15),
+            Inches(2.9),
+            Inches(1.8),
+            ["16 × 58G primary", "8 × 58G secondary", "Cisco ASIC attach", "Raw or PCS mode"],
+            size=12,
+            space=4,
+        )
+        add_rect(s, Inches(0.4), Inches(4.4), Inches(12.5), Inches(2.4), LIGHT_BG)
+        add_text_box(s, Inches(0.65), Inches(4.55), Inches(12), Inches(0.35), "FPGA soft + hardened functions", size=14, bold=True, color=NAVY)
+        add_bullets(
+            s,
+            Inches(0.65),
+            Inches(5.0),
+            Inches(12),
+            Inches(1.6),
+            [
+                "128GFC PMA/PCS at 112.2G PAM4 with equalization and CDR on FHT",
+                "Mandatory RS-FEC encode/decode; FC framing, R_RDY / BB_Credit, link initialization",
+                "Altera Search IP classify (TCAM/BCAM/MBL) ahead of 8×112G ↔ 16×58G gearbox",
+                "Management: CMIS for SFP112, counters, SEU scrubbing; optional PCIe 5.0/CXL on R47A",
+            ],
+            size=13,
+            space=3,
+        )
     footer(s, page)
 
     # ---- 6 Search IP / TCAM ----
