@@ -7,7 +7,12 @@
 // OutputSquelchForceTx, byte 128 bit 0 is DPDeinit, byte 145 is the staged
 // AppSel for lane 1, and byte 143 bit 0 is the write-only ApplyDPInit
 // trigger. Page 11h is lane status: ConfigStatus is byte 202 and the active
-// AppSel is byte 206. One data path, lane 1, follows Figure 6-5 with
+// AppSel is byte 206. Bytes 135, 136, 137, 147, and 148 are lane-1
+// FailureFlagTx, LOSFlagTx, CDRLOLFlagTx, LOSFlagRx, and CDRLOLFlagRx.
+// A flag stays set while its input is set and holds a pulse until that
+// byte is read. Page 10h bytes 214, 215, 216, 226, and 227 bit 0 mask
+// those flags. int_n is low while any unmasked flag is set. One data
+// path, lane 1, follows Figure 6-5 with
 // SteppedConfigOnly = 0. ModuleReady and DPDeinit clear run the path up.
 // A successful ApplyDPInit copies the staged byte, sets DPInitPending, and
 // cycles a live lane through DPDeactivated. ConfigInProgress holds for one
@@ -25,9 +30,15 @@ module cmis_sfp_slave #(
   input  logic        scl_i,
   input  logic        sda_i,
   output logic        sda_oe,
+  output logic        int_n,
   input  logic        lpmode,
   input  logic        reset_n,
   input  logic        force_fault,
+  input  logic        fail_tx,
+  input  logic        los_tx,
+  input  logic        lol_tx,
+  input  logic        los_rx,
+  input  logic        lol_rx,
   input  logic [15:0] temp_s16,
   input  logic [15:0] vcc_u16,
   output logic [2:0]  mod_state,
@@ -67,6 +78,8 @@ module cmis_sfp_slave #(
   logic       sw_hit;
   logic       apply_hit;
   logic       dp_flag_clr;
+  logic [4:0] lane_clr;
+  logic       f_fail_tx, f_los_tx, f_lol_tx, f_los_rx, f_lol_rx;
   logic       sw_resetting;
   logic       held;
   logic       raise_flag;
@@ -94,7 +107,31 @@ module cmis_sfp_slave #(
   wire rise  = !scl_q && scl_i;
   wire fall  = scl_q && !scl_i;
   wire lowpwr_s = mem[CMIS_CTL][4] | (mem[CMIS_CTL][6] & lpmode);
-  wire int_deassert = !(flag_sc && !mem[31][0]);
+  wire lane_int = (f_fail_tx && !p10[CMIS_MFAILTX][0]) ||
+                  (f_los_tx  && !p10[CMIS_MLOSTX][0])  ||
+                  (f_lol_tx  && !p10[CMIS_MLOLTX][0])  ||
+                  (f_los_rx  && !p10[CMIS_MLOSRX][0])  ||
+                  (f_lol_rx  && !p10[CMIS_MLOLRX][0]);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int);
+  assign int_n = int_deassert;
+
+  function automatic [4:0] lane_clr_of(input [7:0] a, input [7:0] page);
+    begin
+      lane_clr_of = 5'h00;
+      if (page == CMIS_STAT_PAGE) begin
+        if (a == CMIS_FFAILTX)
+          lane_clr_of[0] = 1'b1;
+        else if (a == CMIS_FLOSTX)
+          lane_clr_of[1] = 1'b1;
+        else if (a == CMIS_FLOLTX)
+          lane_clr_of[2] = 1'b1;
+        else if (a == CMIS_FLOSRX)
+          lane_clr_of[3] = 1'b1;
+        else if (a == CMIS_FLOLRX)
+          lane_clr_of[4] = 1'b1;
+      end
+    end
+  endfunction
   wire module_ready = reset_n && !sw_resetting && !force_fault &&
                       (mod_state_q == CMIS_ST_RDY);
   // Eq. 6-6 and 6-12. OutputDisableTx and OutputSquelchForceTx both hold
@@ -154,6 +191,16 @@ module cmis_sfp_slave #(
           peek = {7'h0, tx_status};
         else if (a == CMIS_DPFLAG)
           peek = {7'h0, dp_flag};
+        else if (a == CMIS_FFAILTX)
+          peek = {7'h0, f_fail_tx};
+        else if (a == CMIS_FLOSTX)
+          peek = {7'h0, f_los_tx};
+        else if (a == CMIS_FLOLTX)
+          peek = {7'h0, f_lol_tx};
+        else if (a == CMIS_FLOSRX)
+          peek = {7'h0, f_los_rx};
+        else if (a == CMIS_FLOLRX)
+          peek = {7'h0, f_lol_rx};
         else if (a == CMIS_DPPEND)
           peek = {7'h0, dp_pending};
         else if (a == CMIS_CFGSTAT)
@@ -195,6 +242,11 @@ module cmis_sfp_slave #(
       p10[CMIS_SQFORCE] <= TXDIS_INIT;
       p10[CMIS_DPDEINIT] <= DPDE_INIT;
       p10[CMIS_SCS0] <= CMIS_APP_128;
+      p10[CMIS_MFAILTX] <= 8'hFF;
+      p10[CMIS_MLOSTX] <= 8'hFF;
+      p10[CMIS_MLOLTX] <= 8'hFF;
+      p10[CMIS_MLOSRX] <= 8'hFF;
+      p10[CMIS_MLOLRX] <= 8'hFF;
       st <= S_IDLE;
       sh <= 8'h00;
       bits <= 4'd0;
@@ -209,6 +261,7 @@ module cmis_sfp_slave #(
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       dp_flag_clr <= 1'b0;
+      lane_clr <= 5'h00;
     end else begin
       scl_q <= scl_i;
       sda_q <= sda_i;
@@ -216,6 +269,7 @@ module cmis_sfp_slave #(
       sw_hit <= 1'b0;
       apply_hit <= 1'b0;
       dp_flag_clr <= 1'b0;
+      lane_clr <= 5'h00;
       if (!reset_n) begin
         st <= S_IDLE;
         sda_oe <= 1'b0;
@@ -284,6 +338,7 @@ module cmis_sfp_slave #(
                   flag_clr <= 1'b1;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
+                lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -319,6 +374,7 @@ module cmis_sfp_slave #(
                   flag_clr <= 1'b1;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
+                lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
                 ptr <= ptr + 8'd1;
                 bits <= 4'd0;
                 st <= S_TX;
@@ -548,6 +604,25 @@ module cmis_sfp_slave #(
         dp_flag <= 1'b1;
       else if (dp_flag_clr)
         dp_flag <= 1'b0;
+    end
+  end
+
+  // Level inputs hold the flag. A pulse stays latched until the host reads
+  // that page 11h byte. The clear and a still-active input overlap, so the
+  // flag does not drop for one poll.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      f_fail_tx <= 1'b0;
+      f_los_tx  <= 1'b0;
+      f_lol_tx  <= 1'b0;
+      f_los_rx  <= 1'b0;
+      f_lol_rx  <= 1'b0;
+    end else begin
+      f_fail_tx <= fail_tx || (f_fail_tx && !lane_clr[0]);
+      f_los_tx  <= los_tx  || (f_los_tx  && !lane_clr[1]);
+      f_lol_tx  <= lol_tx  || (f_lol_tx  && !lane_clr[2]);
+      f_los_rx  <= los_rx  || (f_los_rx  && !lane_clr[3]);
+      f_lol_rx  <= lol_rx  || (f_lol_rx  && !lane_clr[4]);
     end
   end
 endmodule

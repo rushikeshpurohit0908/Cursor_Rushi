@@ -16,7 +16,8 @@
 // window is 0x200 + 32*port. LPMode and ResetL are cage pins. Lane 1
 // DPDeinit, OutputSquelchForceTx, and ApplyDPInit are written on page 10h.
 // Page 10h byte 145 is the staged AppSel. Page 11h is the data-path state,
-// ConfigStatus, and the active AppSel. The line rate for that port
+// ConfigStatus, the active AppSel, and the five lane-1 flags. Bits [13:9]
+// of the cage control register are the flag masks. The line rate for that port
 // is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 stays set while
 // that write is applied: both links drop, the pipes finish the current
 // frame, and the system path restarts on the new lane map.
@@ -188,6 +189,12 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][3:0]  cmis_cfg;
   logic [N_CLIENT-1:0][7:0]  cmis_act;
   logic [N_CLIENT-1:0][7:0]  cmis_staged;
+  logic [N_CLIENT-1:0][4:0]  cmis_mask;
+  logic [N_CLIENT-1:0]       cmis_ffail;
+  logic [N_CLIENT-1:0]       cmis_flos_tx;
+  logic [N_CLIENT-1:0]       cmis_flol_tx;
+  logic [N_CLIENT-1:0]       cmis_flos_rx;
+  logic [N_CLIENT-1:0]       cmis_flol_rx;
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
@@ -287,6 +294,7 @@ module fc128_bridge_top #(
         .dp_deinit(cmis_dpde[gi]),
         .staged_appsel(cmis_staged[gi]),
         .apply_pulse(cmis_apply[gi]),
+        .flag_mask(cmis_mask[gi]),
         .mod_prs_n(cmis_modprs_n[gi]),
         .busy(cmis_busy[gi]),
         .present(cmis_present[gi]),
@@ -314,6 +322,11 @@ module fc128_bridge_top #(
         .lane_valid(cmis_lane_v[gi]),
         .config_status(cmis_cfg[gi]),
         .active_appsel(cmis_act[gi]),
+        .flag_fail_tx(cmis_ffail[gi]),
+        .flag_los_tx(cmis_flos_tx[gi]),
+        .flag_lol_tx(cmis_flol_tx[gi]),
+        .flag_los_rx(cmis_flos_rx[gi]),
+        .flag_lol_rx(cmis_flol_rx[gi]),
         .scl_oe(cmis_scl_oe[gi]),
         .sda_oe(cmis_sda_oe[gi]),
         .scl_i(cmis_scl_i[gi]),
@@ -345,6 +358,7 @@ module fc128_bridge_top #(
       cmis_sq    <= '0;
       cmis_dpde  <= '0;
       cmis_staged <= {N_CLIENT{CMIS_APP_128}};
+      cmis_mask  <= {N_CLIENT{5'h1F}};
       cmis_rstn  <= {N_CLIENT{1'b1}};
       cmis_swrst <= '0;
       cmis_apply <= '0;
@@ -370,6 +384,7 @@ module fc128_bridge_top #(
         cmis_rstn[csr_addr[7:5]]  <= csr_wdata[5];
         cmis_dpde[csr_addr[7:5]]  <= csr_wdata[6];
         cmis_sq[csr_addr[7:5]]    <= csr_wdata[8];
+        cmis_mask[csr_addr[7:5]]  <= csr_wdata[13:9];
       end else if (csr_write && csr_addr[11:8] == 4'h2 && csr_addr[4:2] == 3'd6 &&
                    csr_addr[7:5] < N_CLIENT) begin
         port_rate[csr_addr[7:5]] <= (csr_wdata[1:0] == 2'b11) ? 2'b00 : csr_wdata[1:0];
@@ -433,10 +448,10 @@ module fc128_bridge_top #(
           endcase
         end else if (csr_addr[11:8] == 4'h2 && csr_addr[7:5] < N_CLIENT) begin
           case (csr_addr[4:2])
-            3'd0: rdata_mux = {23'h0, cmis_sq[port_idx], 1'b0, cmis_dpde[port_idx],
-                               cmis_rstn[port_idx], cmis_lp_hw[port_idx],
-                               cmis_txdis[port_idx], 1'b0, cmis_lp_sw[port_idx],
-                               cmis_poll[port_idx]};
+            3'd0: rdata_mux = {18'h0, cmis_mask[port_idx], cmis_sq[port_idx], 1'b0,
+                               cmis_dpde[port_idx], cmis_rstn[port_idx],
+                               cmis_lp_hw[port_idx], cmis_txdis[port_idx], 1'b0,
+                               cmis_lp_sw[port_idx], cmis_poll[port_idx]};
             3'd1: rdata_mux = {3'h0, cmis_tx_rb[port_idx], cmis_lp_rb[port_idx],
                                (cmis_st[port_idx] == CMIS_ST_FLT),
                                (cmis_st[port_idx] == CMIS_ST_RDY),
@@ -449,12 +464,15 @@ module fc128_bridge_top #(
                                cmis_f1[port_idx], cmis_f0[port_idx]};
             3'd4: rdata_mux = {28'h0, cmis_sq_rb[port_idx], cmis_armed[port_idx],
                                cmis_tx_rb[port_idx], cmis_lp_rb[port_idx]};
-            // Page 11h lane 1: pending, valid, DPDeinit readback, flag,
-            // Tx output, Rx output, DPState.
-            3'd5: rdata_mux = {22'h0, cmis_pend[port_idx], cmis_lane_v[port_idx],
-                               cmis_de_rb[port_idx], cmis_dpchg[port_idx],
-                               cmis_txst[port_idx], cmis_rxst[port_idx],
-                               cmis_dp[port_idx]};
+            // Page 11h lane 1. [15:11] are CDRLOLFlagRx, LOSFlagRx,
+            // CDRLOLFlagTx, LOSFlagTx, FailureFlagTx. [9:0] stay in the
+            // order the bridge test already checks.
+            3'd5: rdata_mux = {16'h0, cmis_flol_rx[port_idx], cmis_flos_rx[port_idx],
+                               cmis_flol_tx[port_idx], cmis_flos_tx[port_idx],
+                               cmis_ffail[port_idx], 1'b0, cmis_pend[port_idx],
+                               cmis_lane_v[port_idx], cmis_de_rb[port_idx],
+                               cmis_dpchg[port_idx], cmis_txst[port_idx],
+                               cmis_rxst[port_idx], cmis_dp[port_idx]};
             // Bit 4 is set until the requested rate is the one running.
             3'd6: rdata_mux = {27'h0, rate_busy[port_idx], 2'b00, port_rate[port_idx]};
             // ConfigStatus, active AppSel, staged AppSel.

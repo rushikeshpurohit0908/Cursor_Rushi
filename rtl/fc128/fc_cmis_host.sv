@@ -12,9 +12,13 @@
 //   * write page 10h byte 145 when the staged AppSel byte changes, then on
 //     apply_pulse write byte 143 bit 0. Byte 143 is the write-only
 //     ApplyDPInit trigger (single-byte write).
+//   * select page 10h and read-modify-write bit 0 of the lane-1 mask
+//     bytes (214, 215, 216, 226, 227) so they follow flag_mask. Bits
+//     [7:1] of those bytes are left as the module set them.
 //   * select page 11h and read lane 1: DPState, OutputStatusRx,
-//     OutputStatusTx, DPStateChangedFlag, DPInitPending, ConfigStatus,
-//     and the active AppSel.
+//     OutputStatusTx, DPStateChangedFlag, the five lane flags,
+//     DPInitPending, ConfigStatus, and the active AppSel. The flag
+//     bytes are clear-on-read in the module.
 //   * read lower bytes 0 through 17 and publish identifier, revision, module
 //     state, flags, temperature, and supply.
 //
@@ -35,6 +39,9 @@ module fc_cmis_host #(
   input  logic        dp_deinit,
   input  logic [7:0]  staged_appsel,
   input  logic        apply_pulse,
+  // [0] FailureFlagTx, [1] LOSFlagTx, [2] CDRLOLFlagTx,
+  // [3] LOSFlagRx, [4] CDRLOLFlagRx. A 1 masks that flag off IntL.
+  input  logic [4:0]  flag_mask,
   input  logic        mod_prs_n,
 
   output logic        busy,
@@ -63,6 +70,11 @@ module fc_cmis_host #(
   output logic        lane_valid,
   output logic [3:0]  config_status,
   output logic [7:0]  active_appsel,
+  output logic        flag_fail_tx,
+  output logic        flag_los_tx,
+  output logic        flag_lol_tx,
+  output logic        flag_los_rx,
+  output logic        flag_lol_rx,
 
   output logic        scl_oe,
   output logic        sda_oe,
@@ -90,6 +102,8 @@ module fc_cmis_host #(
   localparam [4:0] OP_WR145 = 5'd15;
   localparam [4:0] OP_RD202 = 5'd16;
   localparam [4:0] OP_RD206 = 5'd17;
+  localparam [4:0] OP_RDMSK = 5'd18;
+  localparam [4:0] OP_WRMSK = 5'd19;
 
   logic        cmd_valid, cmd_ready, cmd_write, cmd_done, cmd_nack;
   logic [7:0]  cmd_addr, cmd_wdata, rx_data;
@@ -99,9 +113,36 @@ module fc_cmis_host #(
   logic [7:0]  cap [0:31];
   logic [4:0]  op, nxt;
   logic        launch, inflight, wait_gap;
-  logic        ctrl_ok, tx_ok, sq_ok, deinit_ok, as_ok, lane_ok, sw_pend, apply_pend;
+  logic        ctrl_ok, tx_ok, sq_ok, deinit_ok, as_ok, lane_ok, mask_ok, mask_arm, sw_pend, apply_pend;
   logic [7:0]  as_rb;
+  logic [4:0]  mask_rb;
+  logic [2:0]  mask_i;
   logic [15:0] gapcnt;
+
+  function automatic [7:0] mask_addr(input [2:0] idx);
+    begin
+      case (idx)
+        3'd0: mask_addr = CMIS_MFAILTX;
+        3'd1: mask_addr = CMIS_MLOSTX;
+        3'd2: mask_addr = CMIS_MLOLTX;
+        3'd3: mask_addr = CMIS_MLOSRX;
+        default: mask_addr = CMIS_MLOLRX;
+      endcase
+    end
+  endfunction
+
+  function automatic [4:0] mask_put(input [4:0] old, input [2:0] idx, input logic bitv);
+    begin
+      mask_put = old;
+      case (idx)
+        3'd0: mask_put[0] = bitv;
+        3'd1: mask_put[1] = bitv;
+        3'd2: mask_put[2] = bitv;
+        3'd3: mask_put[3] = bitv;
+        default: mask_put[4] = bitv;
+      endcase
+    end
+  endfunction
 
   fc_i2c_master #(.DIV(DIV), .DEV(CMIS_DEV)) u_i2c (
     .clk(clk), .rst_n(rst_n),
@@ -151,6 +192,10 @@ module fc_cmis_host #(
       as_ok     <= 1'b0;
       as_rb     <= 8'h00;
       lane_ok   <= 1'b0;
+      mask_ok   <= 1'b0;
+      mask_arm  <= 1'b0;
+      mask_rb   <= 5'h00;
+      mask_i    <= 3'd0;
       sw_pend   <= 1'b0;
       apply_pend <= 1'b0;
       gapcnt    <= 16'd0;
@@ -178,6 +223,11 @@ module fc_cmis_host #(
       lane_valid <= 1'b0;
       config_status <= 4'h0;
       active_appsel <= 8'h00;
+      flag_fail_tx <= 1'b0;
+      flag_los_tx  <= 1'b0;
+      flag_lol_tx  <= 1'b0;
+      flag_los_rx  <= 1'b0;
+      flag_lol_rx  <= 1'b0;
     end else begin
       if (rx_valid)
         cap[rx_index] <= rx_data;
@@ -203,6 +253,8 @@ module fc_cmis_host #(
           deinit_ok <= 1'b0;
           as_ok     <= 1'b0;
           lane_ok   <= 1'b0;
+          mask_ok   <= 1'b0;
+          mask_arm  <= 1'b0;
           lane_valid <= 1'b0;
           wait_gap  <= 1'b1;
           gapcnt    <= GAPW[15:0];
@@ -231,7 +283,11 @@ module fc_cmis_host #(
             OP_PG: begin
               op        <= nxt;
               cmd_write <= 1'b0;
-              cmd_rlen  <= (nxt == OP_RD11) ? CMIS_DP_N : 6'd1;
+              // The first pass reads 128..134 only, so bring-up is sampled
+              // on the same schedule as before. Later passes also take the
+              // five lane-flag bytes through 148.
+              cmd_rlen  <= (nxt != OP_RD11) ? 6'd1 :
+                           (mask_arm ? CMIS_LANE_N : CMIS_DP_N);
               if (nxt == OP_RD128 || nxt == OP_RD11)
                 cmd_addr <= CMIS_DPDEINIT;
               else if (nxt == OP_RD143)
@@ -240,6 +296,8 @@ module fc_cmis_host #(
                 cmd_addr <= CMIS_SQFORCE;
               else if (nxt == OP_RD145)
                 cmd_addr <= CMIS_SCS0;
+              else if (nxt == OP_RDMSK)
+                cmd_addr <= mask_addr(3'd0);
               else
                 cmd_addr <= CMIS_TXDIS;
               launch <= 1'b1;
@@ -315,12 +373,19 @@ module fc_cmis_host #(
                 apply_pend <= 1'b0;
             end
             OP_RD11: begin
-              // Bytes 128..134. Lane 1 is the low nibble and bit 0.
-              dp_state   <= cap[0][3:0];
-              rx_status  <= cap[CMIS_OUTRX - CMIS_DPDEINIT][0];
-              tx_status  <= cap[CMIS_OUTTX - CMIS_DPDEINIT][0];
-              dp_changed <= cap[CMIS_DPFLAG - CMIS_DPDEINIT][0];
-              op         <= OP_RD235;
+              // Bytes 128..148. Lane 1 is the low nibble and bit 0.
+              dp_state     <= cap[0][3:0];
+              rx_status    <= cap[CMIS_OUTRX - CMIS_DPDEINIT][0];
+              tx_status    <= cap[CMIS_OUTTX - CMIS_DPDEINIT][0];
+              dp_changed   <= cap[CMIS_DPFLAG - CMIS_DPDEINIT][0];
+              if (mask_arm) begin
+                flag_fail_tx <= cap[CMIS_FFAILTX - CMIS_DPDEINIT][0];
+                flag_los_tx  <= cap[CMIS_FLOSTX - CMIS_DPDEINIT][0];
+                flag_lol_tx  <= cap[CMIS_FLOLTX - CMIS_DPDEINIT][0];
+                flag_los_rx  <= cap[CMIS_FLOSRX - CMIS_DPDEINIT][0];
+                flag_lol_rx  <= cap[CMIS_FLOLRX - CMIS_DPDEINIT][0];
+              end
+              op           <= OP_RD235;
               cmd_write  <= 1'b0;
               cmd_addr   <= CMIS_DPPEND;
               cmd_rlen   <= 6'd1;
@@ -347,6 +412,41 @@ module fc_cmis_host #(
               lane_valid    <= 1'b1;
               lane_ok       <= 1'b1;
             end
+            OP_RDMSK: begin
+              if (cap[0][0] == flag_mask[mask_i]) begin
+                mask_rb <= mask_put(mask_rb, mask_i, flag_mask[mask_i]);
+                if (mask_i == 3'd4) begin
+                  mask_ok <= 1'b1;
+                end else begin
+                  mask_i    <= mask_i + 3'd1;
+                  op        <= OP_RDMSK;
+                  cmd_write <= 1'b0;
+                  cmd_addr  <= mask_addr(mask_i + 3'd1);
+                  cmd_rlen  <= 6'd1;
+                  launch    <= 1'b1;
+                end
+              end else begin
+                op        <= OP_WRMSK;
+                cmd_write <= 1'b1;
+                cmd_addr  <= mask_addr(mask_i);
+                cmd_wdata <= merge_bit0(cap[0], flag_mask[mask_i]);
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
+            OP_WRMSK: begin
+              mask_rb <= mask_put(mask_rb, mask_i, flag_mask[mask_i]);
+              if (mask_i == 3'd4) begin
+                mask_ok <= 1'b1;
+              end else begin
+                mask_i    <= mask_i + 3'd1;
+                op        <= OP_RDMSK;
+                cmd_write <= 1'b0;
+                cmd_addr  <= mask_addr(mask_i + 3'd1);
+                cmd_rlen  <= 6'd1;
+                launch    <= 1'b1;
+              end
+            end
             OP_POLL: begin
               ident          <= cap[0];
               rev            <= cap[1];
@@ -360,6 +460,9 @@ module fc_cmis_host #(
               vcc_u16        <= {cap[16], cap[17]};
               present        <= (cap[0] != 8'h00) && (cap[0] != 8'hFF);
               lane_ok        <= 1'b0;
+              // The first status/poll pair matches the bring-up the bridge
+              // test observes. Mask writes start on the next pass.
+              mask_arm       <= 1'b1;
               wait_gap       <= 1'b1;
               gapcnt         <= GAPW[15:0];
             end
@@ -376,6 +479,8 @@ module fc_cmis_host #(
             deinit_ok  <= 1'b0;
             as_ok      <= 1'b0;
             lane_ok    <= 1'b0;
+            mask_ok    <= 1'b0;
+            mask_arm   <= 1'b0;
             lane_valid <= 1'b0;
           end
         end else if (wait_gap) begin
@@ -435,6 +540,15 @@ module fc_cmis_host #(
           cmd_write <= 1'b1;
           cmd_addr  <= CMIS_PAGE;
           cmd_wdata <= CMIS_STAT_PAGE;
+          cmd_rlen  <= 6'd1;
+          launch    <= 1'b1;
+        end else if (mask_arm && (!mask_ok || (flag_mask != mask_rb))) begin
+          mask_i    <= 3'd0;
+          op        <= OP_PG;
+          nxt       <= OP_RDMSK;
+          cmd_write <= 1'b1;
+          cmd_addr  <= CMIS_PAGE;
+          cmd_wdata <= CMIS_LANE_PAGE;
           cmd_rlen  <= 6'd1;
           launch    <= 1'b1;
         end else begin

@@ -12,7 +12,13 @@
 // Page 11h reports DPState (byte 128, lane 1 in [3:0]), OutputStatusRx
 // (byte 132), OutputStatusTx (byte 133), DPStateChangedFlag (byte 134,
 // clear on read), ConfigStatus (byte 202 [3:0]), the active AppSel
-// (byte 206), and DPInitPending (byte 235). Byte 2 bit 6, SteppedConfigOnly,
+// (byte 206), and DPInitPending (byte 235). Bytes 135, 136, 137, 147, and
+// 148 are the lane-1 clear-on-read flags FailureFlagTx, LOSFlagTx,
+// CDRLOLFlagTx, LOSFlagRx, and CDRLOLFlagRx. A flag stays set while its
+// input is set, and a pulse is held until that byte is read. Page 10h
+// bytes 214, 215, 216, 226, and 227 bit 0 are the matching masks. Bits
+// [7:1] are preserved and power up at 1. An unmasked flag forces lower
+// byte 3 bit 0 to 0 and drives IntL low. Byte 2 bit 6, SteppedConfigOnly,
 // stays clear. Lower bytes 86-97 advertise three one-lane applications.
 // Lanes in the map are numbered from 1.
 
@@ -36,11 +42,23 @@ localparam [7:0] CMIS_SCS0      = 8'd145;
 localparam [7:0] CMIS_OUTRX     = 8'd132;
 localparam [7:0] CMIS_OUTTX     = 8'd133;
 localparam [7:0] CMIS_DPFLAG    = 8'd134;
+localparam [7:0] CMIS_FFAILTX   = 8'd135;
+localparam [7:0] CMIS_FLOSTX    = 8'd136;
+localparam [7:0] CMIS_FLOLTX    = 8'd137;
+localparam [7:0] CMIS_FLOSRX    = 8'd147;
+localparam [7:0] CMIS_FLOLRX    = 8'd148;
+localparam [7:0] CMIS_MFAILTX   = 8'd214;
+localparam [7:0] CMIS_MLOSTX    = 8'd215;
+localparam [7:0] CMIS_MLOLTX    = 8'd216;
+localparam [7:0] CMIS_MLOSRX    = 8'd226;
+localparam [7:0] CMIS_MLOLRX    = 8'd227;
 localparam [7:0] CMIS_CFGSTAT   = 8'd202;
 localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;
 localparam [7:0] CMIS_APP_BASE  = 8'd86;
 localparam [5:0] CMIS_DP_N      = 6'd7;
+// Bytes 128..148, so the status pass also collects the five lane flags.
+localparam [5:0] CMIS_LANE_N    = 6'd21;
 localparam [5:0] CMIS_POLL_N    = 6'd18;
 // SFF-8024 host electrical IDs and single-mode Fibre Channel media IDs.
 localparam [7:0] CMIS_H_128     = 8'h4A;
