@@ -47,6 +47,7 @@ module tb_fc_cmis;
   logic [2:0] mod_state, slave_state;
   logic int_deasserted, flag_state;
   logic [15:0] temp_rb, vcc_rb, aux1_rb, aux2_rb, aux3_rb, cust_rb;
+  logic [3:0][31:0] vname, vpn;
   logic [3:0] dp_rb, dp_mod;
   logic rx_rb, tx_rb, dp_changed, dp_pending, lane_valid;
   logic [3:0] cfg_h, cfg_s;
@@ -82,6 +83,7 @@ module tb_fc_cmis;
     .temp_s16(temp_rb), .vcc_u16(vcc_rb),
     .aux1_s16(aux1_rb), .aux2_s16(aux2_rb),
     .aux3_s16(aux3_rb), .cust_s16(cust_rb),
+    .vendor_name(vname), .vendor_pn(vpn),
     .dp_state(dp_rb), .rx_status(rx_rb), .tx_status(tx_rb),
     .dp_changed(dp_changed), .dp_pending(dp_pending),
     .lane_valid(lane_valid),
@@ -186,6 +188,30 @@ module tb_fc_cmis;
     end
   endtask
 
+  task automatic wait_vendor;
+    input integer limit;
+    input [255:0] tag;
+    integer k;
+    begin
+      for (k = 0; k < limit; k = k + 1) begin
+        @(posedge clk);
+        if (vname[0] == CMIS_VENDOR_NAME[127:96] &&
+            vname[1] == CMIS_VENDOR_NAME[95:64] &&
+            vname[2] == CMIS_VENDOR_NAME[63:32] &&
+            vname[3] == CMIS_VENDOR_NAME[31:0] &&
+            vpn[0] == CMIS_VENDOR_PN[127:96] &&
+            vpn[1] == CMIS_VENDOR_PN[95:64] &&
+            vpn[2] == CMIS_VENDOR_PN[63:32] &&
+            vpn[3] == CMIS_VENDOR_PN[31:0] && !busy)
+          disable wait_vendor;
+      end
+      $display("FAIL %0s name %h %h %h %h pn %h %h %h %h",
+               tag, vname[0], vname[1], vname[2], vname[3],
+               vpn[0], vpn[1], vpn[2], vpn[3]);
+      errors = errors + 1;
+    end
+  endtask
+
   task automatic expect_from;
     input integer from;
     input integer n;
@@ -227,6 +253,10 @@ module tb_fc_cmis;
     repeat (4) @(posedge clk);
     rst_n = 1;
     repeat (4) @(posedge clk);
+    if (vname !== '0 || vpn !== '0) begin
+      $display("FAIL vendor reset name %h pn %h", vname[0], vpn[0]);
+      errors = errors + 1;
+    end
 
     poll_en = 1;
     wait_state(CMIS_ST_RDY, 200000, "ready");
@@ -946,6 +976,9 @@ module tb_fc_cmis;
       $display("FAIL aux3 pulse saw %b flags %h aux3 %h", saw, flag3, aux3_rb);
       errors = errors + 1;
     end
+    // Page 00h is read once after byte 34, before the armed status pass.
+    // The bytes 0-17 poll does not carry the name.
+    wait_vendor(800000, "vendor");
 
     staged = 8'h20;
     @(negedge clk);
@@ -1095,7 +1128,7 @@ module tb_fc_cmis;
       integer k;
       for (k = 0; k < 200000; k = k + 1) begin
         @(posedge clk);
-        if (!present && !scl_oe && !sda_oe)
+        if (!present && !scl_oe && !sda_oe && vname == '0 && vpn == '0)
           disable abs_watch;
       end
       $display("FAIL absent present %b oe %b%b", present, scl_oe, sda_oe);
@@ -1103,6 +1136,7 @@ module tb_fc_cmis;
     end
     mod_prs_n = 0;
     wait_state(CMIS_ST_RDY, 200000, "inserted");
+    wait_vendor(800000, "vendor reinserted");
 
     reset_n = 0;
     repeat (30) @(posedge clk);

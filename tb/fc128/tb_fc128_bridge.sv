@@ -476,6 +476,16 @@ module tb_fc128_bridge;
       $display("FAIL cmis aux mask %h", rdw);
       errors = errors + 1;
     end
+    csr_read_t(12'h500, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis vendor reset %h", rdw);
+      errors = errors + 1;
+    end
+    csr_read_t(12'h510, rdw);
+    if (rdw !== 32'h0) begin
+      $display("FAIL cmis pn reset %h", rdw);
+      errors = errors + 1;
+    end
     csr_read_t(12'h204, rdw);
     if (rdw !== 32'h0188_0000) begin
       $display("FAIL cmis status %h", rdw);
@@ -727,6 +737,41 @@ module tb_fc128_bridge;
     csr_read_t(12'h208, rdw);
     if (rdw !== 32'h80E8_2880) begin
       $display("FAIL cmis monitors %h", rdw);
+      errors = errors + 1;
+    end
+    begin : cmis_vendor
+      integer k;
+      for (k = 0; k < 800000; k = k + 1) begin
+        @(posedge clk_client);
+        csr_read_t(12'h500, rdw);
+        if (rdw == 32'h414C_5445) begin
+          csr_read_t(12'h504, rdw);
+          if (rdw == 32'h5241_2020) begin
+            csr_read_t(12'h508, rdw);
+            if (rdw == 32'h2020_2020) begin
+              csr_read_t(12'h50C, rdw);
+              if (rdw == 32'h2020_2020) begin
+                csr_read_t(12'h510, rdw);
+                if (rdw == 32'h5346_5031) begin
+                  csr_read_t(12'h514, rdw);
+                  if (rdw == 32'h3132_2D31) begin
+                    csr_read_t(12'h518, rdw);
+                    if (rdw == 32'h3238_4746) begin
+                      csr_read_t(12'h51C, rdw);
+                      if (rdw == 32'h4320_2020) begin
+                        csr_read_t(12'h520, rdw);
+                        if (rdw == 32'h0)
+                          disable cmis_vendor;
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      $display("FAIL cmis vendor %h", rdw);
       errors = errors + 1;
     end
     // DPDeinit is clear, so the lane commissions to DPActivated on its own.

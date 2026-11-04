@@ -27,7 +27,9 @@
 // 33 mask is `0x318` and resets to `8'hFF`. Lower byte 11, the Aux3
 // and custom threshold flags, is `0x20C[31:24]`. Aux3 supply and the
 // custom laser frequency error are at `0x31C`. The byte 34 mask is
-// `0x400` and resets to `8'hFF`.
+// `0x400` and resets to `8'hFF`. Page 00h VendorName and VendorPN are
+// `0x500 + 32*port` through `0x51C`. Byte 128 is the MSB of `0x500`.
+// They are not packed into `0x400`.
 // The line rate for that port
 // is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 stays set while
 // that write is applied: both links drop, the pipes finish the current
@@ -195,6 +197,8 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0][15:0] cmis_aux2;
   logic [N_CLIENT-1:0][15:0] cmis_aux3;
   logic [N_CLIENT-1:0][15:0] cmis_cust;
+  logic [N_CLIENT-1:0][31:0] cmis_vn0, cmis_vn1, cmis_vn2, cmis_vn3;
+  logic [N_CLIENT-1:0][31:0] cmis_pn0, cmis_pn1, cmis_pn2, cmis_pn3;
   logic [N_CLIENT-1:0][3:0]  cmis_dp;
   logic [N_CLIENT-1:0]       cmis_rxst;
   logic [N_CLIENT-1:0]       cmis_txst;
@@ -248,6 +252,16 @@ module fc128_bridge_top #(
 
   generate
     for (gi = 0; gi < N_CLIENT; gi = gi + 1) begin : g_port
+      wire [3:0][31:0] vname_w;
+      wire [3:0][31:0] vpn_w;
+      assign cmis_vn0[gi] = vname_w[0];
+      assign cmis_vn1[gi] = vname_w[1];
+      assign cmis_vn2[gi] = vname_w[2];
+      assign cmis_vn3[gi] = vname_w[3];
+      assign cmis_pn0[gi] = vpn_w[0];
+      assign cmis_pn1[gi] = vpn_w[1];
+      assign cmis_pn2[gi] = vpn_w[2];
+      assign cmis_pn3[gi] = vpn_w[3];
       fc_port #(
         .MAX_PAY        (MAX_PAY),
         .DEFAULT_CREDIT (DEFAULT_CREDIT)
@@ -345,6 +359,8 @@ module fc128_bridge_top #(
         .aux2_s16(cmis_aux2[gi]),
         .aux3_s16(cmis_aux3[gi]),
         .cust_s16(cmis_cust[gi]),
+        .vendor_name(vname_w),
+        .vendor_pn(vpn_w),
         .dp_state(cmis_dp[gi]),
         .rx_status(cmis_rxst[gi]),
         .tx_status(cmis_txst[gi]),
@@ -557,6 +573,20 @@ module fc128_bridge_top #(
           case (csr_addr[4:2])
             // Byte 34 mask. The 0x300 window ends at 0x31C.
             3'd0: rdata_mux = {24'h0, cmis_cmask[port_idx]};
+            default: rdata_mux = 32'h0;
+          endcase
+        end else if (csr_addr[11:8] == 4'h5 && csr_addr[7:5] < N_CLIENT) begin
+          // Page 00h. Words 0-3 are VendorName, words 4-7 are VendorPN.
+          // Not packed into the byte 34 mask at 0x400.
+          case (csr_addr[4:2])
+            3'd0: rdata_mux = cmis_vn0[port_idx];
+            3'd1: rdata_mux = cmis_vn1[port_idx];
+            3'd2: rdata_mux = cmis_vn2[port_idx];
+            3'd3: rdata_mux = cmis_vn3[port_idx];
+            3'd4: rdata_mux = cmis_pn0[port_idx];
+            3'd5: rdata_mux = cmis_pn1[port_idx];
+            3'd6: rdata_mux = cmis_pn2[port_idx];
+            3'd7: rdata_mux = cmis_pn3[port_idx];
             default: rdata_mux = 32'h0;
           endcase
         end
