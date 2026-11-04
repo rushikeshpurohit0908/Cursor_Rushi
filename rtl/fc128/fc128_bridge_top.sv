@@ -7,7 +7,8 @@
 //
 // The block coding, ordered sets, and RS(255,239) FEC are the PoC mapping of
 // the proposal's soft pipeline (PCS, FEC, framing, credit, gearbox, link
-// init). Control blocks carry the FC-FS ordered set in [31:0]. FC-PI-8
+// init). Control blocks carry the FC-FS ordered set in [31:0]. CSR bit 5
+// packs each system direction into Clause 119 256b/257b words. FC-PI-8
 // production FEC is RS(544,514)-class over GF(2^10); fc_rs_fec is the
 // replacement point. Ordered sets are documented in fc128_defs.vh.
 module fc128_bridge_top #(
@@ -49,13 +50,14 @@ module fc128_bridge_top #(
   output logic [N_CLIENT-1:0][63:0] sec_tx_data
 );
   localparam [31:0] ID_WORD  = 32'hFC12_8039;
-  localparam [31:0] VER_WORD = 32'h0001_0000;
+  localparam [31:0] VER_WORD = 32'h0001_0001;
 
   logic        sw_reset;
   logic        sys_loopback;
   logic        fec_en;
   logic        scrambler_en;
   logic        sec_protect;
+  logic        xcode_en;
   logic [31:0] scratch;
   logic [N_CLIENT-1:0] port_en;
   logic        credit_load;
@@ -162,6 +164,7 @@ module fc128_bridge_top #(
         .fec_en          (fec_en),
         .scrambler_en    (scrambler_en),
         .scrambler_en_s  (scrambler_en_s),
+        .xcode_en        (xcode_en),
         .credit_load     (credit_load),
         .credit_cli_i    (credit_cli_i),
         .credit_sys_i    (credit_sys_i),
@@ -211,6 +214,7 @@ module fc128_bridge_top #(
       fec_en        <= 1'b0;
       scrambler_en  <= 1'b0;
       sec_protect   <= 1'b0;
+      xcode_en      <= 1'b0;
       scratch       <= 32'h0;
       port_en       <= '0;
       credit_load   <= 1'b0;
@@ -226,6 +230,7 @@ module fc128_bridge_top #(
             fec_en       <= csr_wdata[2];
             scrambler_en <= csr_wdata[3];
             sec_protect  <= csr_wdata[4];
+            xcode_en     <= csr_wdata[5];
           end
           12'h010: port_en <= csr_wdata[N_CLIENT-1:0];
           12'h014: scratch <= csr_wdata;
@@ -248,7 +253,8 @@ module fc128_bridge_top #(
     case (csr_addr)
       12'h000: rdata_mux = ID_WORD;
       12'h004: rdata_mux = VER_WORD;
-      12'h008: rdata_mux = {27'h0, sec_protect, scrambler_en, fec_en, sys_loopback, sw_reset};
+      12'h008: rdata_mux = {26'h0, xcode_en, sec_protect, scrambler_en, fec_en,
+                             sys_loopback, sw_reset};
       12'h00C: rdata_mux = {{(32-N_CLIENT){1'b0}}, p_lock};
       12'h010: rdata_mux = {{(32-N_CLIENT){1'b0}}, port_en};
       12'h014: rdata_mux = scratch;

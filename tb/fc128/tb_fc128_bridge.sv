@@ -1,7 +1,8 @@
 `timescale 1ns/1ps
 // Self-checking bring-up of the 8-port FC128 bridge:
-// scramble, block lock, link init, CRC frames, system loopback, credit stall,
-// RS-FEC correction, the second client port, NOS drop, and the protect-lane copy.
+// 256b/257b system-lane transcode, scramble, block lock, link init, CRC
+// frames, system loopback, credit stall, RS-FEC correction, the second
+// client port, NOS drop, and the protect-lane copy.
 module tb_fc128_bridge;
   `include "fc128_defs.vh"
   `include "fc_crc.vh"
@@ -112,6 +113,10 @@ module tb_fc128_bridge;
   end
 
   integer      cap_count = 0;
+  integer      x_beats0 = 0;
+  integer      x_start0 = 0;
+  integer      x_start1 = 0;
+  logic        watch_x = 0;
   integer      cap_port = 0;
   integer      cap_k = 0;
   integer      cap_n = 0;
@@ -169,6 +174,22 @@ module tb_fc128_bridge;
     if (check_sec && sec_tx_valid[0] &&
         (sec_tx_data[0] !== sys_tx_data[0] || sec_tx_sync[0] !== sys_tx_sync[0]))
       sec_mismatch <= sec_mismatch + 1;
+  end
+
+  always @(posedge clk_system or negedge rst_system_n) begin
+    if (!rst_system_n || !watch_x) begin
+      x_beats0 <= 0;
+      x_start0 <= 0;
+      x_start1 <= 0;
+    end else begin
+      if (sys_tx_valid[0] && sys_tx_ready[0]) begin
+        x_beats0 <= x_beats0 + 1;
+        if (sys_tx_sync[0][1] == 1'b0)
+          x_start0 <= x_start0 + 1;
+      end
+      if (sys_tx_valid[1] && sys_tx_ready[1] && sys_tx_sync[1][1] == 1'b0)
+        x_start1 <= x_start1 + 1;
+    end
   end
 
   integer errors = 0;
@@ -323,6 +344,7 @@ module tb_fc128_bridge;
   reg [31:0] crc_snap;
   integer prev;
   integer bi;
+  integer b0, s0c, s1c;
   reg [7:0] CW [0:23];
 
   initial begin
@@ -349,6 +371,49 @@ module tb_fc128_bridge;
       $display("FAIL scratch %h", rdw);
       errors = errors + 1;
     end
+
+    // System lanes carry 256b/257b. The client port stays a 66-bit block.
+    csr_write_t(12'h008, 32'h0000_002A);
+    csr_read_t(12'h008, rdw);
+    if (rdw !== 32'h0000_002A) begin
+      $display("FAIL xcode csr %h", rdw);
+      errors = errors + 1;
+    end
+    csr_write_t(12'h010, 32'h0000_00FF);
+    mon_fec = 0;
+    drive_en = 1;
+    watch_x = 1;
+    wait_links(8'hFF, 8000);
+    @(negedge clk_system);
+    b0 = x_beats0;
+    s0c = x_start0;
+    s1c = x_start1;
+    prev = cap_count;
+    for (bi = 0; bi < 8; bi = bi + 1) pay[bi] = 8'h30 + bi[7:0];
+    send_pay(0, 8, 0, FC_SOF, FC_EOF);
+    wait_cap(0, prev, 8000);
+    expect_bytes(8);
+    @(negedge clk_system);
+    if (x_start1 != s1c) begin
+      $display("FAIL lane1 transcode marker %0d", x_start1 - s1c);
+      errors = errors + 1;
+    end
+    if ((x_beats0 - b0) < 8) begin
+      $display("FAIL lane0 transcode beats %0d", x_beats0 - b0);
+      errors = errors + 1;
+    end else if (((x_start0 - s0c) * 2) + 2 < (x_beats0 - b0) ||
+                 ((x_start0 - s0c) * 2) > (x_beats0 - b0) + 2) begin
+      $display("FAIL lane0 markers %0d of %0d", x_start0 - s0c, x_beats0 - b0);
+      errors = errors + 1;
+    end
+    drive_en = 0;
+    watch_x = 0;
+    rst_client_n = 0;
+    rst_system_n = 0;
+    repeat (8) @(posedge clk_client);
+    rst_client_n = 1;
+    rst_system_n = 1;
+    repeat (8) @(posedge clk_client);
 
     // loopback, scrambler, protect. FEC off.
     csr_write_t(12'h008, 32'h0000_001A);

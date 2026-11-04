@@ -22,6 +22,7 @@ module fc_port #(
   input  logic        fec_en,
   input  logic        scrambler_en,
   input  logic        scrambler_en_s,
+  input  logic        xcode_en,
   input  logic        credit_load,
   input  logic [7:0]  credit_cli_i,
   input  logic [7:0]  credit_sys_i,
@@ -75,6 +76,15 @@ module fc_port #(
   logic [8:0]  cli_next, sys_next;
 
   logic        split_ready;
+  logic        x_in_ready;
+  logic        x_to_split_valid;
+  logic [1:0]  x_to_split_sync;
+  logic [63:0] x_to_split_data;
+  logic        dec_valid;
+  logic        dec_ready;
+  logic [1:0]  dec_sync;
+  logic [63:0] dec_data;
+  logic [1:0]  xcode_meta;
   logic [1:0]  split_valid;
   logic [1:0][1:0] split_sync;
   logic [1:0][63:0] split_data;
@@ -102,10 +112,20 @@ module fc_port #(
   end
   assign sys_locked = sys_lock_sync[0] & sys_lock_sync[1];
 
+  // xcode_en is a client-clock CSR bit. System block lock sees the packed
+  // sync marker only after it has crossed into clk_system.
+  always_ff @(posedge clk_system or negedge rst_system_n) begin
+    if (!rst_system_n)
+      xcode_meta <= 2'b00;
+    else
+      xcode_meta <= {xcode_meta[0], xcode_en};
+  end
+
   fc_rx_front u_client_rx (
     .clk           (clk_client),
     .rst_n         (rst_client_n),
     .scrambler_en  (scrambler_en),
+    .sync_relax    (1'b0),
     .valid         (client_rx_valid),
     .ready         (c_rx_ready),
     .sync_in       (client_rx_sync),
@@ -143,7 +163,7 @@ module fc_port #(
     .rx_sync         (c_rx_sync),
     .rx_data         (c_rx_data),
     .tx_valid        (c_tx_to_split_valid),
-    .tx_ready        (split_ready),
+    .tx_ready        (x_in_ready),
     .tx_sync         (c_tx_to_split_sync),
     .tx_data         (c_tx_to_split_data),
     .credit_ok       (sys_cr != 8'h00),
@@ -158,15 +178,29 @@ module fc_port #(
     .stat_fec_fail   (c2s_fail)
   );
 
+  fc_xcode_tx u_xcode_tx (
+    .clk       (clk_client),
+    .rst_n     (rst_client_n),
+    .en        (xcode_en),
+    .in_valid  (c_tx_to_split_valid),
+    .in_ready  (x_in_ready),
+    .in_sync   (c_tx_to_split_sync),
+    .in_data   (c_tx_to_split_data),
+    .out_valid (x_to_split_valid),
+    .out_ready (split_ready),
+    .out_sync  (x_to_split_sync),
+    .out_data  (x_to_split_data)
+  );
+
   fc_pair_split #(.DEPTH(FIFO_DEPTH)) u_split (
     .clk_wr   (clk_client),
     .rst_wr_n (rst_client_n),
     .clk_rd   (clk_system),
     .rst_rd_n (rst_system_n),
-    .wr_valid (c_tx_to_split_valid),
+    .wr_valid (x_to_split_valid),
     .wr_ready (split_ready),
-    .wr_sync  (c_tx_to_split_sync),
-    .wr_data  (c_tx_to_split_data),
+    .wr_sync  (x_to_split_sync),
+    .wr_data  (x_to_split_data),
     .rd_valid (split_valid),
     .rd_ready (sys_tx_ready),
     .rd_sync  (split_sync),
@@ -196,6 +230,7 @@ module fc_port #(
         .clk           (clk_system),
         .rst_n         (rst_system_n),
         .scrambler_en  (scrambler_en_s),
+        .sync_relax    (xcode_meta[1]),
         .valid         (sys_rx_valid[si]),
         .ready         (sys_rx_ready[si]),
         .sync_in       (sys_rx_sync[si]),
@@ -222,6 +257,20 @@ module fc_port #(
     .rd_data  (merge_data)
   );
 
+  fc_xcode_rx u_xcode_rx (
+    .clk       (clk_client),
+    .rst_n     (rst_client_n),
+    .en        (xcode_en),
+    .in_valid  (merge_valid),
+    .in_ready  (merge_ready),
+    .in_sync   (merge_sync),
+    .in_data   (merge_data),
+    .out_valid (dec_valid),
+    .out_ready (dec_ready),
+    .out_sync  (dec_sync),
+    .out_data  (dec_data)
+  );
+
   fc_pipe #(.MAX_PAY(MAX_PAY)) u_s2c (
     .clk             (clk_client),
     .rst_n           (rst_client_n),
@@ -231,10 +280,10 @@ module fc_port #(
     .rx_link_up      (system_link_up),
     .tx_link_up      (client_link_up),
     .tx_os           (client_tx_os),
-    .rx_valid        (merge_valid),
-    .rx_ready        (merge_ready),
-    .rx_sync         (merge_sync),
-    .rx_data         (merge_data),
+    .rx_valid        (dec_valid),
+    .rx_ready        (dec_ready),
+    .rx_sync         (dec_sync),
+    .rx_data         (dec_data),
     .tx_valid        (s_pipe_tx_valid),
     .tx_ready        (c_tx_ready),
     .tx_sync         (s_pipe_tx_sync),
@@ -272,9 +321,9 @@ module fc_port #(
     .rst_n      (rst_client_n),
     .port_en    (port_en),
     .locked     (sys_locked),
-    .rx_fire    (merge_valid && merge_ready),
-    .rx_sync    (merge_sync),
-    .rx_data    (merge_data),
+    .rx_fire    (dec_valid && dec_ready),
+    .rx_sync    (dec_sync),
+    .rx_data    (dec_data),
     .link_up    (system_link_up),
     .tx_os      (system_tx_os),
     .state_code (system_ls)

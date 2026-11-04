@@ -4,6 +4,7 @@ fc_rx_front.sv
 fc_rs_fec.sv
 fc_lane_pair.sv
 fc_link_sm.sv
+fc_xcode_stream.sv
 fc_pipe.sv
 fc_port.sv
 fc128_bridge_top.sv
