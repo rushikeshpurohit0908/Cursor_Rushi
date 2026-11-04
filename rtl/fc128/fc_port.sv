@@ -1,0 +1,256 @@
+// One FC128 client port.
+// Client PMA is one lane. The system side is a bonded pair (the 1:2 gearbox).
+// Frame payload crosses client -> system and system -> client. R_RDY and
+// buffer-to-buffer credit stay on the link that owns them.
+module fc_port #(
+  parameter int MAX_PAY        = 128,
+  parameter int FIFO_DEPTH     = 32,
+  parameter int DEFAULT_CREDIT = 8
+) (
+  input  logic        clk_client,
+  input  logic        rst_client_n,
+  input  logic        clk_system,
+  input  logic        rst_system_n,
+
+  input  logic        port_en,
+  input  logic        fec_en,
+  input  logic        scrambler_en,
+  input  logic        scrambler_en_s,
+  input  logic        credit_load,
+  input  logic [7:0]  credit_cli_i,
+  input  logic [7:0]  credit_sys_i,
+
+  input  logic        client_rx_valid,
+  output logic        client_rx_ready,
+  input  logic [1:0]  client_rx_sync,
+  input  logic [63:0] client_rx_data,
+  output logic        client_tx_valid,
+  input  logic        client_tx_ready,
+  output logic [1:0]  client_tx_sync,
+  output logic [63:0] client_tx_data,
+
+  output logic [1:0]       sys_tx_valid,
+  input  logic [1:0]       sys_tx_ready,
+  output logic [1:0][1:0]  sys_tx_sync,
+  output logic [1:0][63:0] sys_tx_data,
+  input  logic [1:0]       sys_rx_valid,
+  output logic [1:0]       sys_rx_ready,
+  input  logic [1:0][1:0]  sys_rx_sync,
+  input  logic [1:0][63:0] sys_rx_data,
+
+  output logic        client_lock,
+  output logic [7:0]  credit_cli,
+  output logic [7:0]  credit_sys,
+  output logic [31:0] stat_rx_frames,
+  output logic [31:0] stat_tx_frames,
+  output logic [31:0] stat_crc_err,
+  output logic [31:0] stat_fec_corr,
+  output logic [31:0] stat_fec_fail
+);
+  logic        c_rx_ready, c_tx_valid, c_tx_ready;
+  logic [1:0]  c_rx_sync, c_tx_sync;
+  logic [63:0] c_rx_data, c_tx_data;
+  logic        c_tx_to_split_valid;
+  logic        s_pipe_tx_valid;
+  logic [1:0]  c_tx_to_split_sync;
+  logic [1:0]  s_pipe_tx_sync;
+  logic [63:0] c_tx_to_split_data;
+  logic [63:0] s_pipe_tx_data;
+  logic        c2s_take, s2c_take, c2s_rrdy, s2c_rrdy;
+  logic        c2s_acc, s2c_acc;
+  logic [31:0] c2s_rx, c2s_tx, c2s_crc, c2s_corr, c2s_fail;
+  logic [31:0] s2c_rx, s2c_tx, s2c_crc, s2c_corr, s2c_fail;
+  logic [7:0]  cli_cr, sys_cr;
+  logic [8:0]  cli_next, sys_next;
+
+  logic        split_ready;
+  logic [1:0]  split_valid;
+  logic [1:0][1:0] split_sync;
+  logic [1:0][63:0] split_data;
+  logic        merge_valid, merge_ready;
+  logic [1:0]  merge_sync;
+  logic [63:0] merge_data;
+  logic [1:0]  sys_lock;
+  logic [1:0][1:0]  sys_front_sync;
+  logic [1:0][63:0] sys_front_data;
+
+  fc_rx_front u_client_rx (
+    .clk           (clk_client),
+    .rst_n         (rst_client_n),
+    .scrambler_en  (scrambler_en),
+    .valid         (client_rx_valid),
+    .ready         (c_rx_ready),
+    .sync_in       (client_rx_sync),
+    .data_in       (client_rx_data),
+    .sync_out      (c_rx_sync),
+    .data_out      (c_rx_data),
+    .locked        (client_lock)
+  );
+  assign client_rx_ready = c_rx_ready;
+
+  fc_scrambler u_client_tx_scr (
+    .clk        (clk_client),
+    .rst_n      (rst_client_n),
+    .en         (scrambler_en),
+    .descramble (1'b0),
+    .step       (c_tx_valid && client_tx_ready),
+    .din        (c_tx_data),
+    .dout       (client_tx_data)
+  );
+  assign client_tx_valid = c_tx_valid;
+  assign client_tx_sync  = c_tx_sync;
+  assign c_tx_ready      = client_tx_ready;
+
+  fc_pipe #(.MAX_PAY(MAX_PAY)) u_c2s (
+    .clk             (clk_client),
+    .rst_n           (rst_client_n),
+    .port_en         (port_en),
+    .fec_en          (fec_en),
+    .locked          (client_lock),
+    .rx_valid        (client_rx_valid),
+    .rx_ready        (c_rx_ready),
+    .rx_sync         (c_rx_sync),
+    .rx_data         (c_rx_data),
+    .tx_valid        (c_tx_to_split_valid),
+    .tx_ready        (split_ready),
+    .tx_sync         (c_tx_to_split_sync),
+    .tx_data         (c_tx_to_split_data),
+    .credit_ok       (sys_cr != 8'h00),
+    .credit_take     (c2s_take),
+    .saw_r_rdy       (c2s_rrdy),
+    .rrdy_req        (s2c_acc),
+    .frame_accepted  (c2s_acc),
+    .stat_rx_good    (c2s_rx),
+    .stat_tx_frames  (c2s_tx),
+    .stat_crc_err    (c2s_crc),
+    .stat_fec_corr   (c2s_corr),
+    .stat_fec_fail   (c2s_fail)
+  );
+
+  fc_pair_split #(.DEPTH(FIFO_DEPTH)) u_split (
+    .clk_wr   (clk_client),
+    .rst_wr_n (rst_client_n),
+    .clk_rd   (clk_system),
+    .rst_rd_n (rst_system_n),
+    .wr_valid (c_tx_to_split_valid),
+    .wr_ready (split_ready),
+    .wr_sync  (c_tx_to_split_sync),
+    .wr_data  (c_tx_to_split_data),
+    .rd_valid (split_valid),
+    .rd_ready (sys_tx_ready),
+    .rd_sync  (split_sync),
+    .rd_data  (split_data)
+  );
+
+  genvar si;
+  generate
+    for (si = 0; si < 2; si = si + 1) begin : g_sys_tx
+      fc_scrambler u_scr (
+        .clk        (clk_system),
+        .rst_n      (rst_system_n),
+        .en         (scrambler_en_s),
+        .descramble (1'b0),
+        .step       (split_valid[si] && sys_tx_ready[si]),
+        .din        (split_data[si]),
+        .dout       (sys_tx_data[si])
+      );
+      assign sys_tx_valid[si] = split_valid[si];
+      assign sys_tx_sync[si]  = split_sync[si];
+    end
+  endgenerate
+
+  generate
+    for (si = 0; si < 2; si = si + 1) begin : g_sys_rx
+      fc_rx_front u_sys_rx (
+        .clk           (clk_system),
+        .rst_n         (rst_system_n),
+        .scrambler_en  (scrambler_en_s),
+        .valid         (sys_rx_valid[si]),
+        .ready         (sys_rx_ready[si]),
+        .sync_in       (sys_rx_sync[si]),
+        .data_in       (sys_rx_data[si]),
+        .sync_out      (sys_front_sync[si]),
+        .data_out      (sys_front_data[si]),
+        .locked        (sys_lock[si])
+      );
+    end
+  endgenerate
+
+  fc_pair_merge #(.DEPTH(FIFO_DEPTH)) u_merge (
+    .clk_wr   (clk_system),
+    .rst_wr_n (rst_system_n),
+    .clk_rd   (clk_client),
+    .rst_rd_n (rst_client_n),
+    .wr_valid (sys_rx_valid),
+    .wr_ready (sys_rx_ready),
+    .wr_sync  (sys_front_sync),
+    .wr_data  (sys_front_data),
+    .rd_valid (merge_valid),
+    .rd_ready (merge_ready),
+    .rd_sync  (merge_sync),
+    .rd_data  (merge_data)
+  );
+
+  fc_pipe #(.MAX_PAY(MAX_PAY)) u_s2c (
+    .clk             (clk_client),
+    .rst_n           (rst_client_n),
+    .port_en         (port_en),
+    .fec_en          (fec_en),
+    .locked          (sys_lock[0] && sys_lock[1]),
+    .rx_valid        (merge_valid),
+    .rx_ready        (merge_ready),
+    .rx_sync         (merge_sync),
+    .rx_data         (merge_data),
+    .tx_valid        (s_pipe_tx_valid),
+    .tx_ready        (c_tx_ready),
+    .tx_sync         (s_pipe_tx_sync),
+    .tx_data         (s_pipe_tx_data),
+    .credit_ok       (cli_cr != 8'h00),
+    .credit_take     (s2c_take),
+    .saw_r_rdy       (s2c_rrdy),
+    .rrdy_req        (c2s_acc),
+    .frame_accepted  (s2c_acc),
+    .stat_rx_good    (s2c_rx),
+    .stat_tx_frames  (s2c_tx),
+    .stat_crc_err    (s2c_crc),
+    .stat_fec_corr   (s2c_corr),
+    .stat_fec_fail   (s2c_fail)
+  );
+  assign c_tx_valid = s_pipe_tx_valid;
+  assign c_tx_sync  = s_pipe_tx_sync;
+  assign c_tx_data  = s_pipe_tx_data;
+
+  always_comb begin
+    cli_next = {1'b0, cli_cr};
+    sys_next = {1'b0, sys_cr};
+    if (s2c_take && cli_next != 9'h000)
+      cli_next = cli_next - 9'd1;
+    if (c2s_rrdy && cli_next != 9'h0FF)
+      cli_next = cli_next + 9'd1;
+    if (c2s_take && sys_next != 9'h000)
+      sys_next = sys_next - 9'd1;
+    if (s2c_rrdy && sys_next != 9'h0FF)
+      sys_next = sys_next + 9'd1;
+  end
+
+  always_ff @(posedge clk_client or negedge rst_client_n) begin
+    if (!rst_client_n) begin
+      cli_cr <= 8'(DEFAULT_CREDIT);
+      sys_cr <= 8'(DEFAULT_CREDIT);
+    end else if (credit_load) begin
+      cli_cr <= credit_cli_i;
+      sys_cr <= credit_sys_i;
+    end else begin
+      cli_cr <= cli_next[7:0];
+      sys_cr <= sys_next[7:0];
+    end
+  end
+
+  assign credit_cli     = cli_cr;
+  assign credit_sys     = sys_cr;
+  assign stat_rx_frames = c2s_rx;
+  assign stat_tx_frames = s2c_tx;
+  assign stat_crc_err   = c2s_crc + s2c_crc;
+  assign stat_fec_corr  = c2s_corr + s2c_corr;
+  assign stat_fec_fail  = c2s_fail + s2c_fail;
+endmodule
