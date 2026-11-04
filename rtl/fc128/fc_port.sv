@@ -13,6 +13,11 @@
 // lanes. 64GFC and 32GFC use lane 0, and block lock follows that lane.
 // 32GFC inserts one IDLE per block in front of the transcode and deletes it
 // on the merged stream, before this port's link machine and frame pipe.
+// A new rate while the port is out of reset holds both link machines down,
+// waits until both pipes are between frames, then clears the shaper, the
+// transcode, the RS(544,514) stream, and the lane FIFOs onto the new map.
+// Block lock and the scramblers keep running. rate_busy stays set until
+// that apply finishes.
 module fc_port #(
   parameter int MAX_PAY        = 128,
   parameter int FIFO_DEPTH     = 32,
@@ -66,7 +71,8 @@ module fc_port #(
   output logic        system_link_up,
   output logic [2:0]  client_ls,
   output logic [2:0]  system_ls,
-  output logic        sys_locked
+  output logic        sys_locked,
+  output logic        rate_busy
 );
   logic        c_rx_ready, c_tx_valid, c_tx_ready;
   logic [1:0]  c_rx_sync, c_tx_sync;
@@ -87,6 +93,7 @@ module fc_port #(
   logic [1:0]  rate_rx_sync;
   logic [63:0] rate_rx_data;
   logic        c2s_take, s2c_take, c2s_rrdy, s2c_rrdy;
+  logic        c2s_idle, s2c_idle;
   logic        c2s_acc, s2c_acc;
   logic [31:0] c2s_rx, c2s_tx, c2s_crc, c2s_corr, c2s_fail;
   logic [31:0] s2c_rx, s2c_tx, s2c_crc, s2c_corr, s2c_fail;
@@ -131,8 +138,40 @@ module fc_port #(
   logic [31:0] client_tx_os;
   logic [31:0] system_tx_os;
 
+  // Rate apply. stripe and half change only after the system gearbox has
+  // been reset on both clocks, so a live write cannot splice two lane maps.
+  localparam [2:0] RH_IDLE  = 3'd0;
+  localparam [2:0] RH_DRAIN = 3'd1;
+  localparam [2:0] RH_ARM   = 3'd2;
+  localparam [2:0] RH_ACK   = 3'd3;
+  localparam [2:0] RH_HOLD  = 3'd4;
+  localparam [2:0] RH_REL   = 3'd5;
+
+  logic [1:0]  rate_use;
+  logic [2:0]  rh;
+  logic [3:0]  clr_cnt;
+  logic [11:0] drain_cnt;
+  logic        stall;
+  logic        stall_d;
+  logic        link_hold;
+  logic        clr_req;
+  logic       clr_s1, clr_s2;
+  logic       ack1, ack2;
+  // 2'b01 is 64GFC and 2'b10 is 32GFC. Anything else, including the reserved
+  // encoding, keeps the 128GFC stripe. half is the 32GFC IDLE insert.
+  wire [1:0] rate_norm = (rate == 2'b01 || rate == 2'b10) ? rate : 2'b00;
+  wire       stripe = (rate_use != 2'b01) && (rate_use != 2'b10);
+  wire       half   = (rate_use == 2'b10);
+  wire       rst_stream_n = rst_client_n & ~stall;
+  wire       rst_fifo_c_n = rst_client_n & ~(clr_req & ack2);
+  wire       rst_fifo_s_n = rst_system_n & ~clr_s2;
+  wire       credit_reload = stall_d & ~stall;
+  wire       pipes_idle = c2s_idle && s2c_idle && !client_link_up && !system_link_up;
+  assign     rate_busy = link_hold || (rate_norm != rate_use);
+
   // System block lock is produced on clk_system. The return pipe and the
-  // system link machine both sit on clk_client.
+  // system link machine both sit on clk_client. stall masks it as soon as
+  // the rate write is seen, before the system reset has crossed.
   always_ff @(posedge clk_client or negedge rst_client_n) begin
     if (!rst_client_n) begin
       sys_lock_meta <= 2'b00;
@@ -142,12 +181,108 @@ module fc_port #(
       sys_lock_sync <= sys_lock_meta;
     end
   end
-  // 2'b01 is 64GFC and 2'b10 is 32GFC. Anything else, including the reserved
-  // encoding, keeps the 128GFC stripe. half is the 32GFC IDLE insert.
-  wire stripe = (rate != 2'b01) && (rate != 2'b10);
-  wire half   = (rate == 2'b10);
   assign sys_locked = stripe ? (sys_lock_sync[0] & sys_lock_sync[1])
                              : sys_lock_sync[0];
+  wire link_ok_c = client_lock & ~link_hold;
+  wire link_ok_s = sys_locked & ~link_hold;
+
+  always_ff @(posedge clk_system or negedge rst_system_n) begin
+    if (!rst_system_n) begin
+      clr_s1 <= 1'b0;
+      clr_s2 <= 1'b0;
+    end else begin
+      clr_s1 <= clr_req;
+      clr_s2 <= clr_s1;
+    end
+  end
+
+  always_ff @(posedge clk_client or negedge rst_client_n) begin
+    if (!rst_client_n) begin
+      ack1      <= 1'b0;
+      ack2      <= 1'b0;
+      rate_use  <= rate_norm;
+      rh        <= RH_IDLE;
+      clr_cnt   <= 4'h0;
+      drain_cnt <= 12'h0;
+      stall     <= 1'b0;
+      stall_d   <= 1'b0;
+      link_hold <= 1'b0;
+      clr_req   <= 1'b0;
+    end else begin
+      ack1    <= clr_s2;
+      ack2    <= ack1;
+      stall_d <= stall;
+      case (rh)
+        RH_IDLE: begin
+          stall     <= 1'b0;
+          link_hold <= 1'b0;
+          clr_req   <= 1'b0;
+          drain_cnt <= 12'h0;
+          if (rate_norm != rate_use) begin
+            link_hold <= 1'b1;
+            rh        <= RH_DRAIN;
+          end
+        end
+        // Links are down. Let a frame already in either pipe finish on the
+        // old lane map, then clear the system path. The drain cap stops a
+        // wedged frame from holding the old rate forever.
+        RH_DRAIN: begin
+          stall     <= 1'b0;
+          link_hold <= 1'b1;
+          clr_req   <= 1'b0;
+          if (pipes_idle || drain_cnt == 12'hFFF) begin
+            rh <= RH_ARM;
+          end else begin
+            drain_cnt <= drain_cnt + 12'd1;
+          end
+        end
+        RH_ARM: begin
+          stall     <= 1'b1;
+          link_hold <= 1'b1;
+          clr_req   <= 1'b1;
+          rh        <= RH_ACK;
+        end
+        RH_ACK: begin
+          stall     <= 1'b1;
+          link_hold <= 1'b1;
+          clr_req   <= 1'b1;
+          if (ack2) begin
+            clr_cnt <= 4'h0;
+            rh      <= RH_HOLD;
+          end
+        end
+        RH_HOLD: begin
+          stall     <= 1'b1;
+          link_hold <= 1'b1;
+          clr_req   <= 1'b1;
+          if (clr_cnt == 4'd8) begin
+            rate_use <= rate_norm;
+            clr_req  <= 1'b0;
+            rh       <= RH_REL;
+          end else begin
+            clr_cnt <= clr_cnt + 4'd1;
+          end
+        end
+        RH_REL: begin
+          link_hold <= 1'b1;
+          clr_req   <= 1'b0;
+          if (!ack2) begin
+            stall <= 1'b0;
+            link_hold <= 1'b0;
+            rh    <= RH_IDLE;
+          end else begin
+            stall <= 1'b1;
+          end
+        end
+        default: begin
+          stall     <= 1'b0;
+          link_hold <= 1'b0;
+          clr_req   <= 1'b0;
+          rh        <= RH_IDLE;
+        end
+      endcase
+    end
+  end
 
   // xcode_en is a client-clock CSR bit. System block lock sees the packed
   // sync marker only after it has crossed into clk_system.
@@ -212,12 +347,13 @@ module fc_port #(
     .stat_tx_frames  (c2s_tx),
     .stat_crc_err    (c2s_crc),
     .stat_fec_corr   (c2s_corr),
-    .stat_fec_fail   (c2s_fail)
+    .stat_fec_fail   (c2s_fail),
+    .between_frames  (c2s_idle)
   );
 
   fc_rate_tx u_rate_tx (
     .clk       (clk_client),
-    .rst_n     (rst_client_n),
+    .rst_n     (rst_stream_n),
     .half      (half),
     .in_valid  (c_tx_to_split_valid),
     .in_ready  (rate_tx_ready),
@@ -231,7 +367,7 @@ module fc_port #(
 
   fc_xcode_tx u_xcode_tx (
     .clk       (clk_client),
-    .rst_n     (rst_client_n),
+    .rst_n     (rst_stream_n),
     .en        (xcode_en),
     .in_valid  (rate_tx_valid),
     .in_ready  (x_in_ready),
@@ -247,7 +383,7 @@ module fc_port #(
   // 256b/257b transcode is on, because the trailer framing assumes those beats.
   fc_rs544_tx u_rs_tx (
     .clk       (clk_client),
-    .rst_n     (rst_client_n),
+    .rst_n     (rst_stream_n),
     .en        (rs544_en & xcode_en),
     .in_valid  (x_to_split_valid),
     .in_ready  (rs_tx_ready),
@@ -261,9 +397,9 @@ module fc_port #(
 
   fc_pair_split #(.DEPTH(FIFO_DEPTH)) u_split (
     .clk_wr   (clk_client),
-    .rst_wr_n (rst_client_n),
+    .rst_wr_n (rst_fifo_c_n),
     .clk_rd   (clk_system),
-    .rst_rd_n (rst_system_n),
+    .rst_rd_n (rst_fifo_s_n),
     .stripe   (stripe),
     .wr_valid (rs_to_split_valid),
     .wr_ready (split_ready),
@@ -313,9 +449,9 @@ module fc_port #(
 
   fc_pair_merge #(.DEPTH(FIFO_DEPTH)) u_merge (
     .clk_wr   (clk_system),
-    .rst_wr_n (rst_system_n),
+    .rst_wr_n (rst_fifo_s_n),
     .clk_rd   (clk_client),
-    .rst_rd_n (rst_client_n),
+    .rst_rd_n (rst_fifo_c_n),
     .stripe   (stripe),
     .wr_valid (sys_rx_valid),
     .wr_ready (sys_rx_ready),
@@ -329,7 +465,7 @@ module fc_port #(
 
   fc_rs544_rx u_rs_rx (
     .clk        (clk_client),
-    .rst_n      (rst_client_n),
+    .rst_n      (rst_stream_n),
     .en         (rs544_en & xcode_en),
     .in_valid   (merge_valid),
     .in_ready   (merge_ready),
@@ -346,7 +482,7 @@ module fc_port #(
 
   fc_xcode_rx u_xcode_rx (
     .clk       (clk_client),
-    .rst_n     (rst_client_n),
+    .rst_n     (rst_stream_n),
     .en        (xcode_en),
     .in_valid  (rs_rx_valid),
     .in_ready  (rs_rx_ready),
@@ -360,7 +496,7 @@ module fc_port #(
 
   fc_rate_rx u_rate_rx (
     .clk       (clk_client),
-    .rst_n     (rst_client_n),
+    .rst_n     (rst_stream_n),
     .half      (half),
     .in_valid  (dec_valid),
     .in_ready  (rate_rx_in_ready),
@@ -398,7 +534,8 @@ module fc_port #(
     .stat_tx_frames  (s2c_tx),
     .stat_crc_err    (s2c_crc),
     .stat_fec_corr   (s2c_corr),
-    .stat_fec_fail   (s2c_fail)
+    .stat_fec_fail   (s2c_fail),
+    .between_frames  (s2c_idle)
   );
   assign c_tx_valid = s_pipe_tx_valid;
   assign c_tx_sync  = s_pipe_tx_sync;
@@ -408,7 +545,7 @@ module fc_port #(
     .clk        (clk_client),
     .rst_n      (rst_client_n),
     .port_en    (port_en),
-    .locked     (client_lock),
+    .locked     (link_ok_c),
     .rx_fire    (client_rx_valid && c_rx_ready),
     .rx_sync    (c_rx_sync),
     .rx_data    (c_rx_data),
@@ -421,7 +558,7 @@ module fc_port #(
     .clk        (clk_client),
     .rst_n      (rst_client_n),
     .port_en    (port_en),
-    .locked     (sys_locked),
+    .locked     (link_ok_s),
     .rx_fire    (rate_rx_valid && rate_pipe_ready),
     .rx_sync    (rate_rx_sync),
     .rx_data    (rate_rx_data),
@@ -447,7 +584,7 @@ module fc_port #(
     if (!rst_client_n) begin
       cli_cr <= 8'(DEFAULT_CREDIT);
       sys_cr <= 8'(DEFAULT_CREDIT);
-    end else if (credit_load) begin
+    end else if (credit_load || credit_reload) begin
       cli_cr <= credit_cli_i;
       sys_cr <= credit_sys_i;
     end else begin

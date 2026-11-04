@@ -16,7 +16,9 @@
 // window is 0x200 + 32*port. LPMode and ResetL are cage pins. Lane 1
 // DPDeinit and ApplyDPInit are written on page 10h; page 11h is the
 // data-path state and lane status readback. The line rate for that port
-// is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC.
+// is at +0x18: 0 is 128GFC, 1 is 64GFC, 2 is 32GFC. Bit 4 stays set while
+// that write is applied: both links drop, the pipes finish the current
+// frame, and the system path restarts on the new lane map.
 module fc128_bridge_top #(
   parameter int N_CLIENT       = 8,
   parameter int MAX_PAY        = 128,
@@ -183,6 +185,7 @@ module fc128_bridge_top #(
   logic [N_CLIENT-1:0] swrst_w;
   logic [N_CLIENT-1:0] apply_w;
   logic [N_CLIENT-1:0][1:0] port_rate;
+  logic [N_CLIENT-1:0]       rate_busy;
 
   logic [2*N_CLIENT-1:0]       port_sys_rx_valid;
   logic [2*N_CLIENT-1:0]       port_sys_rx_ready;
@@ -257,7 +260,8 @@ module fc128_bridge_top #(
         .system_link_up  (p_system_up[gi]),
         .client_ls       (p_client_ls[gi]),
         .system_ls       (p_system_ls[gi]),
-        .sys_locked      (p_sys_lock[gi])
+        .sys_locked      (p_sys_lock[gi]),
+        .rate_busy       (rate_busy[gi])
       );
 
       // Secondary 58G bank. Protect mode mirrors the even lane of the pair
@@ -434,7 +438,8 @@ module fc128_bridge_top #(
                                cmis_de_rb[port_idx], cmis_dpchg[port_idx],
                                cmis_txst[port_idx], cmis_rxst[port_idx],
                                cmis_dp[port_idx]};
-            3'd6: rdata_mux = {30'h0, port_rate[port_idx]};
+            // Bit 4 is set until the requested rate is the one running.
+            3'd6: rdata_mux = {27'h0, rate_busy[port_idx], 2'b00, port_rate[port_idx]};
             default: rdata_mux = 32'h0;
           endcase
         end

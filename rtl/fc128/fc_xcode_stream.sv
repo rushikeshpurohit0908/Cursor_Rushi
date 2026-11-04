@@ -36,8 +36,9 @@ module fc_xcode_tx (
                  ((ocnt == 3'd1) && out_ready);
   wire take = en && rst_n && in_valid && ready_x;
 
-  assign in_ready  = en ? ready_x : out_ready;
-  assign out_valid = en ? (ocnt != 3'd0) : in_valid;
+  // Reset stalls the stream and clears a partial 257-bit group.
+  assign in_ready  = !rst_n ? 1'b0 : (en ? ready_x : out_ready);
+  assign out_valid = !rst_n ? 1'b0 : (en ? (ocnt != 3'd0) : in_valid);
   assign out_sync  = en ? osync[oidx] : in_sync;
   assign out_data  = en ? odata[oidx] : in_data;
 
@@ -146,8 +147,9 @@ module fc_xcode_rx (
   wire ready_x = !completing || queue_room;
   wire take = en && rst_n && in_valid && ready_x;
 
-  assign in_ready  = en ? ready_x : out_ready;
-  assign out_valid = en ? (ocnt != 3'd0) : in_valid;
+  // Reset stalls the stream and clears a partial 257-bit group.
+  assign in_ready  = !rst_n ? 1'b0 : (en ? ready_x : out_ready);
+  assign out_valid = !rst_n ? 1'b0 : (en ? (ocnt != 3'd0) : in_valid);
   assign out_sync  = en ? osync[oidx] : in_sync;
   assign out_data  = en ? odata[oidx] : in_data;
 

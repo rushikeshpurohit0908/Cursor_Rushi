@@ -3,7 +3,9 @@
 // position. The port loops the system lanes back: 64GFC and 32GFC stay on
 // lane 0, a short frame returns, and 32GFC puts an IDLE between SOF and the
 // payload on that lane. 128GFC still stripes both lanes. A 32GFC frame also
-// returns with the 256b/257b transcode enabled.
+// returns with the 256b/257b transcode enabled. Changing the rate while the
+// link is Active drops both links, reports rate_busy, then a frame returns
+// at the new lane map.
 module tb_fc_rate;
   `include "fc128_defs.vh"
   `include "fc_crc.vh"
@@ -56,7 +58,7 @@ module tb_fc_rate;
   logic [1:0]  sys_tx_valid, sys_tx_ready, sys_rx_valid, sys_rx_ready;
   logic [1:0][1:0]  sys_tx_sync, sys_rx_sync;
   logic [1:0][63:0] sys_tx_data, sys_rx_data;
-  logic        client_lock, client_link_up, system_link_up, sys_locked;
+  logic        client_lock, client_link_up, system_link_up, sys_locked, rate_busy;
   logic [2:0]  client_ls, system_ls;
   logic [15:0] stat_rs544_corr, stat_rs544_fail;
   logic [7:0]  credit_cli, credit_sys;
@@ -84,7 +86,8 @@ module tb_fc_rate;
     .stat_fec_fail(stat_fec_fail),
     .stat_rs544_corr(stat_rs544_corr), .stat_rs544_fail(stat_rs544_fail),
     .client_link_up(client_link_up), .system_link_up(system_link_up),
-    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked)
+    .client_ls(client_ls), .system_ls(system_ls), .sys_locked(sys_locked),
+    .rate_busy(rate_busy)
   );
 
   assign client_tx_ready = 1'b1;
@@ -105,6 +108,7 @@ module tb_fc_rate;
   integer      saw = 0;
   reg [65:0]   seen [0:7];
   logic        arm = 0;
+  logic        cap_clr = 0;
 
   assign client_rx_valid = plain_valid;
   assign client_rx_sync  = plain_sync;
@@ -137,7 +141,7 @@ module tb_fc_rate;
 
   always @(posedge clk_client or negedge rst_client_n) begin
     integer b, n;
-    if (!rst_client_n) begin
+    if (!rst_client_n || cap_clr) begin
       cap_count <= 0;
       pst <= 0;
     end else if (client_tx_valid && client_tx_ready) begin
@@ -184,6 +188,8 @@ module tb_fc_rate;
       lane1_n <= 0;
       saw <= 0;
     end else begin
+      if (!arm)
+        saw <= 0;
       if (sys_tx_valid[1] && sys_tx_ready[1])
         lane1_n <= lane1_n + 1;
       if (sys_tx_valid[0] && sys_tx_ready[0]) begin
@@ -202,6 +208,9 @@ module tb_fc_rate;
   integer errors = 0;
   integer t;
   integer i;
+  integer l0s;
+  integer l1s;
+  integer crc_s;
   integer tx_n = 0;
   integer got_n = 0;
   reg [65:0] txcap [0:15];
@@ -251,9 +260,9 @@ module tb_fc_rate;
         @(posedge clk_client);
         t = t + 1;
       end
-      if (!client_link_up || !system_link_up || !sys_locked) begin
-        $display("FAIL link rate %0d cli %0d sys %0d lock %0b t=%0d",
-                 rate, client_link_up, system_link_up, sys_locked, t);
+      if (!client_link_up || !system_link_up || !sys_locked || rate_busy) begin
+        $display("FAIL link rate %0d cli %0d sys %0d lock %0b busy %0d t=%0d",
+                 rate, client_link_up, system_link_up, sys_locked, rate_busy, t);
         errors = errors + 1;
       end
     end
@@ -276,6 +285,30 @@ module tb_fc_rate;
             $display("FAIL payload[%0d]=%h rate %0d", i, cap[i], rate);
             errors = errors + 1;
           end
+      end
+    end
+  endtask
+
+  task automatic clear_cap;
+    begin
+      cap_clr = 1;
+      @(posedge clk_client);
+      cap_clr = 0;
+    end
+  endtask
+
+  task automatic expect_links_down;
+    integer k;
+    begin
+      k = 0;
+      while ((client_link_up || system_link_up) && k < 200) begin
+        @(posedge clk_client);
+        k = k + 1;
+      end
+      if (client_link_up || system_link_up || !rate_busy) begin
+        $display("FAIL live rate %0d cli %0d sys %0d busy %0d",
+                 rate, client_link_up, system_link_up, rate_busy);
+        errors = errors + 1;
       end
     end
   endtask
@@ -408,6 +441,130 @@ module tb_fc_rate;
       wait_frame;
       if (lane1_n != 0) begin
         $display("FAIL 32 xcode lane1 %0d", lane1_n);
+        errors = errors + 1;
+      end
+    end
+
+    // Same code again does not drop a live link. A different code does,
+    // and the next frame uses the new lane map without a port reset.
+    boot(FC_RATE_64, 1'b0);
+    wait_link;
+    rate = FC_RATE_64;
+    repeat (40) @(posedge clk_client);
+    if (!client_link_up || !system_link_up || rate_busy) begin
+      $display("FAIL same rate dropped the link cli %0d sys %0d busy %0d",
+               client_link_up, system_link_up, rate_busy);
+      errors = errors + 1;
+    end
+
+    rate = FC_RATE_32;
+    expect_links_down;
+    wait_link;
+    if (system_link_up && lane1_n != 0) begin
+      $display("FAIL live 32 lane1 %0d", lane1_n);
+      errors = errors + 1;
+    end
+    if (system_link_up) begin
+      clear_cap;
+      arm = 0;
+      @(posedge clk_system);
+      arm = 1;
+      crc_s = stat_crc_err;
+      send_frame;
+      wait_frame;
+      if (stat_crc_err != crc_s) begin
+        $display("FAIL live 32 crc %0d -> %0d", crc_s, stat_crc_err);
+        errors = errors + 1;
+      end
+      t = 0;
+      while (saw < 5 && t < 8000) begin
+        @(posedge clk_system);
+        t = t + 1;
+      end
+      if (saw < 5 || seen[0][65:64] != FC_SYNC_CTRL || !fc_is_sof(seen[0][31:0]) ||
+          seen[1][65:64] != FC_SYNC_CTRL || seen[1][31:0] != FC_IDLE ||
+          seen[2][65:64] != FC_SYNC_DATA || seen[2][7:0] != pay[0] ||
+          seen[3][65:64] != FC_SYNC_CTRL || seen[3][31:0] != FC_IDLE ||
+          seen[4][65:64] != FC_SYNC_CTRL || !fc_is_eof_good(seen[4][31:0])) begin
+        $display("FAIL live 32 wire %h %h %h %h %h saw %0d",
+                 seen[0], seen[1], seen[2], seen[3], seen[4], saw);
+        errors = errors + 1;
+      end
+      if (lane1_n != 0) begin
+        $display("FAIL live 32 lane1 after frame %0d", lane1_n);
+        errors = errors + 1;
+      end
+    end
+
+    arm = 0;
+    rate = FC_RATE_128;
+    expect_links_down;
+    wait_link;
+    if (system_link_up && lane1_n == 0) begin
+      $display("FAIL live 128 lane1 still idle");
+      errors = errors + 1;
+    end
+    if (system_link_up) begin
+      l0s = lane0_n;
+      l1s = lane1_n;
+      clear_cap;
+      crc_s = stat_crc_err;
+      send_frame;
+      wait_frame;
+      if (stat_crc_err != crc_s) begin
+        $display("FAIL live 128 crc %0d -> %0d", crc_s, stat_crc_err);
+        errors = errors + 1;
+      end
+      if (lane0_n <= l0s || lane1_n <= l1s) begin
+        $display("FAIL live 128 lanes %0d %0d -> %0d %0d", l0s, l1s, lane0_n, lane1_n);
+        errors = errors + 1;
+      end
+    end
+
+    rate = 2'b11;
+    repeat (40) @(posedge clk_client);
+    if (!client_link_up || !system_link_up || rate_busy) begin
+      $display("FAIL reserved rate dropped the link cli %0d sys %0d busy %0d",
+               client_link_up, system_link_up, rate_busy);
+      errors = errors + 1;
+    end
+
+    rate = FC_RATE_64;
+    expect_links_down;
+    wait_link;
+    if (system_link_up) begin
+      l1s = lane1_n;
+      clear_cap;
+      crc_s = stat_crc_err;
+      send_frame;
+      wait_frame;
+      if (stat_crc_err != crc_s) begin
+        $display("FAIL live 64 crc %0d -> %0d", crc_s, stat_crc_err);
+        errors = errors + 1;
+      end
+      if (lane1_n != l1s) begin
+        $display("FAIL live 64 lane1 %0d -> %0d", l1s, lane1_n);
+        errors = errors + 1;
+      end
+    end
+
+    boot(FC_RATE_64, 1'b1);
+    wait_link;
+    rate = FC_RATE_32;
+    expect_links_down;
+    wait_link;
+    if (system_link_up) begin
+      l1s = lane1_n;
+      clear_cap;
+      crc_s = stat_crc_err;
+      send_frame;
+      wait_frame;
+      if (stat_crc_err != crc_s) begin
+        $display("FAIL live 32 xcode crc %0d -> %0d", crc_s, stat_crc_err);
+        errors = errors + 1;
+      end
+      if (lane1_n != l1s) begin
+        $display("FAIL live 32 xcode lane1 %0d -> %0d", l1s, lane1_n);
         errors = errors + 1;
       end
     end

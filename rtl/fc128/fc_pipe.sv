@@ -37,7 +37,8 @@ module fc_pipe #(
   output logic [31:0] stat_tx_frames,
   output logic [31:0] stat_crc_err,
   output logic [31:0] stat_fec_corr,
-  output logic [31:0] stat_fec_fail
+  output logic [31:0] stat_fec_fail,
+  output logic        between_frames
 );
   `include "fc128_defs.vh"
   `include "fc_crc.vh"
@@ -108,6 +109,9 @@ module fc_pipe #(
   wire [7:0] byte_wr = lat_data[lat_sel*8 +: 8];
 
   assign tx_fire = tx_valid && tx_ready;
+  // True when this direction is not inside a frame, so a rate change can
+  // reset the gearbox without cutting a SOF/payload/EOF on this pipe.
+  assign between_frames = !in_frame && (rx_state == RX_IDLE) && (tx_state == TS_FLOW);
   assign rx_ready = port_en && (
     !locked ||
     (rx_state == RX_FRM) ||

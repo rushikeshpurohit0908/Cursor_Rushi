@@ -24,8 +24,9 @@ module fc_rate_tx (
 
   logic phase;
 
-  assign in_ready  = half ? (!phase && out_ready) : out_ready;
-  assign out_valid = half ? (phase || in_valid) : in_valid;
+  // Reset stalls the beat so a line-rate change can clear a partial insert.
+  assign in_ready  = !rst_n ? 1'b0 : (half ? (!phase && out_ready) : out_ready);
+  assign out_valid = !rst_n ? 1'b0 : (half ? (phase || in_valid) : in_valid);
   assign out_sync  = (half && phase) ? FC_SYNC_CTRL : in_sync;
   assign out_data  = (half && phase) ? {32'h0, FC_IDLE} : in_data;
 
@@ -54,8 +55,8 @@ module fc_rate_rx (
 );
   logic phase;
 
-  assign in_ready  = half ? (phase ? 1'b1 : out_ready) : out_ready;
-  assign out_valid = half ? (!phase && in_valid) : in_valid;
+  assign in_ready  = !rst_n ? 1'b0 : (half ? (phase ? 1'b1 : out_ready) : out_ready);
+  assign out_valid = !rst_n ? 1'b0 : (half ? (!phase && in_valid) : in_valid);
   assign out_sync  = in_sync;
   assign out_data  = in_data;
 

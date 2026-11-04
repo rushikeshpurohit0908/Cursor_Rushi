@@ -82,6 +82,10 @@ localparam [31:0] FC_EOF = FC_EOFT;
 // 32GFC keeps lane 0 and inserts one IDLE after every 66-bit block so a
 // 28.05G client fills half of that lane. The IDLE is removed after the
 // system transcode. 2'b11 is reserved and is stored as 128GFC.
+// Changing the rate while a link is Active holds both link machines down
+// until each pipe is between frames, then discards blocks still in the
+// system gearbox and initializes both links at the new rate. Block lock
+// and the scramblers keep running. CSR bit 4 stays set through the apply.
 localparam [1:0] FC_RATE_128 = 2'b00;
 localparam [1:0] FC_RATE_64  = 2'b01;
 localparam [1:0] FC_RATE_32  = 2'b10;
