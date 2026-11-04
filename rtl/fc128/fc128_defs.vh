@@ -76,6 +76,16 @@ localparam [31:0] FC_EOFNI_P  = {FC_D21_6, FC_D21_6, FC_D10_5, FC_K28_5}; // BC 
 localparam [31:0] FC_SOF = FC_SOFI3;
 localparam [31:0] FC_EOF = FC_EOFT;
 
+// Per-port line rate, CSR 0x218 + 32*port bits [1:0].
+// 128GFC stripes a 112.2G client across two 58G lanes.
+// 64GFC keeps lane 0 only (57.8G on one 58G lane).
+// 32GFC keeps lane 0 and inserts one IDLE after every 66-bit block so a
+// 28.05G client fills half of that lane. The IDLE is removed after the
+// system transcode. 2'b11 is reserved and is stored as 128GFC.
+localparam [1:0] FC_RATE_128 = 2'b00;
+localparam [1:0] FC_RATE_64  = 2'b01;
+localparam [1:0] FC_RATE_32  = 2'b10;
+
 // fc_link_sm state codes. Active is the only state that passes frames.
 localparam [2:0] FC_LS_DOWN = 3'd0;
 localparam [2:0] FC_LS_OLS  = 3'd1;
