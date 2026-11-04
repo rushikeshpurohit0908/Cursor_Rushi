@@ -27,7 +27,10 @@
 // byte 10 is the Aux1 laser-temperature and Aux2 TEC-current threshold
 // flags. Both compares are signed. Bytes 18-21 hold the monitors.
 // Lower byte 33 masks byte 10 and powers up at FFh. A read of byte 10
-// clears those flags. One data
+// clears those flags. Lower byte 11 is the Aux3 supply and custom
+// laser-frequency threshold flags. Both compares are signed. Bytes
+// 22-25 hold the monitors. Lower byte 34 masks byte 11 and powers up
+// at FFh. A read of byte 11 clears those flags. One data
 // path, lane 1, follows Figure 6-5 with
 // SteppedConfigOnly = 0. ModuleReady and DPDeinit clear run the path up.
 // A successful ApplyDPInit copies the staged byte, sets DPInitPending, and
@@ -62,6 +65,8 @@ module cmis_sfp_slave #(
   input  logic [15:0] opt_rx_u16,
   input  logic [15:0] aux1_s16,
   input  logic [15:0] aux2_s16,
+  input  logic [15:0] aux3_s16,
+  input  logic [15:0] cust_s16,
   output logic [2:0]  mod_state,
   output logic [7:0]  txdis_byte,
   output logic [7:0]  dpde_byte,
@@ -103,10 +108,12 @@ module cmis_sfp_slave #(
   logic [11:0] opt_clr;
   logic [7:0]  mon_clr;
   logic [7:0]  aux_clr;
+  logic [7:0]  cst_clr;
   logic       f_fail_tx, f_los_tx, f_lol_tx, f_los_rx, f_lol_rx;
   logic [11:0] f_opt;
   logic [7:0]  f_mod;
   logic [7:0]  f_aux;
+  logic [7:0]  f_cst;
   logic       sw_resetting;
   logic       held;
   logic       raise_flag;
@@ -153,7 +160,8 @@ module cmis_sfp_slave #(
                  (f_opt[11] && !p10[CMIS_M_RXLW][0]);
   wire mon_int = |(f_mod & ~mem[CMIS_MONMSK]);
   wire aux_int = |(f_aux & ~mem[CMIS_AUXMSK]);
-  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int || opt_int || mon_int || aux_int);
+  wire cst_int = |(f_cst & ~mem[CMIS_CSTMSK]);
+  wire int_deassert = !((flag_sc && !mem[31][0]) || lane_int || opt_int || mon_int || aux_int || cst_int);
   assign int_n = int_deassert;
 
   function automatic [4:0] lane_clr_of(input [7:0] a, input [7:0] page);
@@ -215,6 +223,17 @@ module cmis_sfp_slave #(
     aux2_cmp > $signed(CMIS_AUX2_HA), aux2_cmp < $signed(CMIS_AUX2_LA),
     aux2_cmp > $signed(CMIS_AUX2_HW), aux2_cmp < $signed(CMIS_AUX2_LW)
   };
+  // Byte 11: {Aux3 HA, Aux3 LA, Aux3 HW, Aux3 LW, Custom HA, Custom LA,
+  // Custom HW, Custom LW}. Vcc2 and the laser frequency error are both
+  // signed. A negative reading must not look like a high alarm.
+  wire signed [15:0] aux3_cmp = $signed(aux3_s16);
+  wire signed [15:0] cust_cmp = $signed(cust_s16);
+  wire [7:0] cst_lvl = {
+    aux3_cmp > $signed(CMIS_AUX3_HA), aux3_cmp < $signed(CMIS_AUX3_LA),
+    aux3_cmp > $signed(CMIS_AUX3_HW), aux3_cmp < $signed(CMIS_AUX3_LW),
+    cust_cmp > $signed(CMIS_CUST_HA), cust_cmp < $signed(CMIS_CUST_LA),
+    cust_cmp > $signed(CMIS_CUST_HW), cust_cmp < $signed(CMIS_CUST_LW)
+  };
   wire [11:0] opt_lvl = {
     opt_rx_u16 < CMIS_RX_LW, opt_rx_u16 > CMIS_RX_HW,
     opt_rx_u16 < CMIS_RX_LA, opt_rx_u16 > CMIS_RX_HA,
@@ -273,6 +292,16 @@ module cmis_sfp_slave #(
         peek = aux2_s16[15:8];
       else if (a == CMIS_AUX2 + 8'd1)
         peek = aux2_s16[7:0];
+      else if (a == CMIS_CSTFLG)
+        peek = f_cst;
+      else if (a == CMIS_AUX3)
+        peek = aux3_s16[15:8];
+      else if (a == CMIS_AUX3 + 8'd1)
+        peek = aux3_s16[7:0];
+      else if (a == CMIS_CUST)
+        peek = cust_s16[15:8];
+      else if (a == CMIS_CUST + 8'd1)
+        peek = cust_s16[7:0];
       else if (a == 8'd14)
         peek = temp_s16[15:8];
       else if (a == 8'd15)
@@ -366,6 +395,7 @@ module cmis_sfp_slave #(
       mem[31] <= 8'hFF;
       mem[CMIS_MONMSK] <= 8'hFF;
       mem[CMIS_AUXMSK] <= 8'hFF;
+      mem[CMIS_CSTMSK] <= 8'hFF;
       mem[CMIS_PAGE] <= 8'h00;
       mem[CMIS_APP_BASE + 0] <= CMIS_H_128;
       mem[CMIS_APP_BASE + 1] <= CMIS_M_128;
@@ -418,6 +448,7 @@ module cmis_sfp_slave #(
       opt_clr <= 12'h000;
       mon_clr <= 8'h00;
       aux_clr <= 8'h00;
+      cst_clr <= 8'h00;
     end else begin
       scl_q <= scl_i;
       sda_q <= sda_i;
@@ -429,6 +460,7 @@ module cmis_sfp_slave #(
       opt_clr <= 12'h000;
       mon_clr <= 8'h00;
       aux_clr <= 8'h00;
+      cst_clr <= 8'h00;
       if (!reset_n) begin
         st <= S_IDLE;
         sda_oe <= 1'b0;
@@ -499,6 +531,8 @@ module cmis_sfp_slave #(
                   mon_clr <= 8'hFF;
                 if (ptr == CMIS_AUXFLG)
                   aux_clr <= 8'hFF;
+                if (ptr == CMIS_CSTFLG)
+                  cst_clr <= 8'hFF;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
@@ -540,6 +574,8 @@ module cmis_sfp_slave #(
                   mon_clr <= 8'hFF;
                 if (ptr == CMIS_AUXFLG)
                   aux_clr <= 8'hFF;
+                if (ptr == CMIS_CSTFLG)
+                  cst_clr <= 8'hFF;
                 if (ptr == CMIS_DPFLAG && mem[CMIS_PAGE] == CMIS_STAT_PAGE)
                   dp_flag_clr <= 1'b1;
                 lane_clr <= lane_clr_of(ptr, mem[CMIS_PAGE]);
@@ -829,6 +865,18 @@ module cmis_sfp_slave #(
     end else begin
       for (ai = 0; ai < 8; ai = ai + 1)
         f_aux[ai] <= aux_lvl[ai] || (f_aux[ai] && !aux_clr[ai]);
+    end
+  end
+
+  // Same latch as byte 10. Byte 11 holds all eight Aux3 and custom
+  // flags, so one read clears the set whose comparison is no longer true.
+  integer xi;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      f_cst <= 8'h00;
+    end else begin
+      for (xi = 0; xi < 8; xi = xi + 1)
+        f_cst[xi] <= cst_lvl[xi] || (f_cst[xi] && !cst_clr[xi]);
     end
   end
 endmodule

@@ -39,9 +39,13 @@
 // temperature (signed 1/256 C) and Aux2 is TEC current (signed
 // 100/32767 %). Equal to the threshold is not a flag. Bytes 18-21 are
 // those monitors. Lower byte 33 is the mask and powers up at FFh. An
-// unmasked flag is part of IntL. The bytes 0-17 poll is left as it is;
-// bytes 18-21 are a separate read. Byte 2 bit 6, SteppedConfigOnly,
-// stays clear.
+// unmasked flag is part of IntL. Lower byte 11 is the Aux3/Custom
+// monitor flags, same order. Aux3 is the additional supply (signed
+// 100 uV) and Custom is the laser frequency error (signed 1 MHz).
+// Bytes 22-25 are those monitors. Lower byte 34 is the mask and powers
+// up at FFh. An unmasked flag is part of IntL. The bytes 0-17 poll is
+// left as it is; bytes 18-21 and 22-25 are separate reads. Byte 2 bit 6,
+// SteppedConfigOnly, stays clear.
 // Lower bytes 86-97 advertise three one-lane applications. Lanes in
 // the map are numbered from 1.
 
@@ -147,6 +151,24 @@ localparam [15:0] CMIS_AUX2_HA  = 16'd26214;
 localparam [15:0] CMIS_AUX2_LA  = 16'h999A;
 localparam [15:0] CMIS_AUX2_HW  = 16'd19660;
 localparam [15:0] CMIS_AUX2_LW  = 16'hB334;
+// Aux3 additional supply (Vcc2) and the vendor custom monitor. Page 02h
+// would hold these at bytes 160-175; this host keeps them fixed. Aux3 is
+// signed 100 uV: 1.980 V, 1.620 V, 1.890 V, 1.710 V. Custom is the laser
+// frequency error, signed 1 MHz: +2000, -2000, +1000, -1000. Order is
+// high alarm, low alarm, high warning, low warning. 1.800 V and +250 MHz
+// sit inside both windows.
+localparam [7:0]  CMIS_CSTFLG   = 8'd11;
+localparam [7:0]  CMIS_AUX3     = 8'd22;
+localparam [7:0]  CMIS_CUST     = 8'd24;
+localparam [7:0]  CMIS_CSTMSK   = 8'd34;
+localparam [15:0] CMIS_AUX3_HA  = 16'd19800;
+localparam [15:0] CMIS_AUX3_LA  = 16'd16200;
+localparam [15:0] CMIS_AUX3_HW  = 16'd18900;
+localparam [15:0] CMIS_AUX3_LW  = 16'd17100;
+localparam [15:0] CMIS_CUST_HA  = 16'd2000;
+localparam [15:0] CMIS_CUST_LA  = 16'hF830;
+localparam [15:0] CMIS_CUST_HW  = 16'd1000;
+localparam [15:0] CMIS_CUST_LW  = 16'hFC18;
 localparam [7:0] CMIS_CFGSTAT   = 8'd202;
 localparam [7:0] CMIS_ACS0      = 8'd206;
 localparam [7:0] CMIS_DPPEND    = 8'd235;
