@@ -1,54 +1,57 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Links Quartus Prime Pro 26.3 to Cursor via QuartusIQ MCP servers (Windows).
+  Install QuartusIQ MCP (+ optional Programmer MCP) for Cursor on Windows.
 
 .DESCRIPTION
-  Follows Altera's Cursor-QuartusIQ Windows setup:
-  1. Verifies Node.js 22.5+ and Quartus Pro at the given root
-  2. Sets QUARTUS_ROOTDIR (User)
-  3. Installs @altera/quartus-mcp and @altera/quartus-programmer-mcp from the downloaded zip
-  4. Writes %USERPROFILE%\.cursor\mcp.json
-  5. Sets LM_LICENSE_FILE (User)
+  Matches Altera QuartusIQ Expert Companion User Guide:
+  B. Cursor + QuartusIQ MCP + skills (Windows)
+  https://docs.altera.com/r/docs/m530666/current/altera-quartusiq-expert-companion-user-guide/b.-cursor-quartusiq-mcp-skills-windows
 
-  Prerequisites (manual):
-  - Quartus Prime Pro 26.1 / 26.1.1 / 26.3 installed
-  - Node.js 22.5+ from https://nodejs.org (new PowerShell after install)
-  - Download quartusiq-and-quartus-programmer-mcp-servers.zip from
-    https://www.altera.com/products/software-tools/quartusiq (sign in → Download)
-    into your Downloads folder (or pass -ZipPath)
+  1. Verifies Node.js / npm
+  2. Optionally sets QUARTUS_ROOTDIR and LM_LICENSE_FILE
+  3. npm install -g from downloaded .tgz (or zip of .tgz files)
+  4. Writes %USERPROFILE%\.cursor\mcp.json using npx (official pattern)
+  5. Optionally copies skills into %USERPROFILE%\.cursor\skills
 
 .PARAMETER QuartusRoot
-  Path to the Quartus install root that contains bin64\quartus_sh.exe.
+  Quartus root containing bin64\quartus_sh.exe.
   Default: C:\altera_pro\26.3\quartus
 
 .PARAMETER LicenseFile
-  FlexLM license: a .dat path (e.g. C:\altera_pro\license.dat) or server (e.g. 1800@server).
-  Required unless LM_LICENSE_FILE is already set in the User environment.
+  Optional FlexLM license (.dat path or 1800@server). Sets User LM_LICENSE_FILE.
 
-.PARAMETER ZipPath
-  Path to quartusiq-and-quartus-programmer-mcp-servers.zip.
-  Default: $env:USERPROFILE\Downloads\quartusiq-and-quartus-programmer-mcp-servers.zip
+.PARAMETER PackagePath
+  Path to a .tgz, a folder of .tgz files, or the Altera zip that contains them.
+  Default: searches Downloads for quartusiq*.zip / altera-quartus*.tgz
 
-.PARAMETER NodeExe
-  Path to node.exe. Default: C:\Program Files\nodejs\node.exe
+.PARAMETER NodeDir
+  Node.js install dir. Default: C:\Program Files\nodejs
+
+.PARAMETER SkillsSource
+  Optional folder containing QuartusIQ skill folders to copy into ~/.cursor/skills
 
 .PARAMETER SkipInstall
-  Only write mcp.json and env vars; skip npm install from the zip.
+  Only write mcp.json / env; skip npm install.
+
+.PARAMETER SkipProgrammer
+  Do not register programmer-mcp in mcp.json.
 
 .EXAMPLE
   .\setup-quartus-mcp.ps1 -LicenseFile "C:\altera_pro\license.dat"
 
 .EXAMPLE
-  .\setup-quartus-mcp.ps1 -LicenseFile "1800@myserver" -QuartusRoot "C:\altera_pro\26.3\quartus"
+  .\setup-quartus-mcp.ps1 -PackagePath "$env:USERPROFILE\Downloads\altera-quartus-mcp-0.6.0.tgz"
 #>
 [CmdletBinding()]
 param(
     [string]$QuartusRoot = "C:\altera_pro\26.3\quartus",
     [string]$LicenseFile = "",
-    [string]$ZipPath = "",
-    [string]$NodeExe = "C:\Program Files\nodejs\node.exe",
-    [switch]$SkipInstall
+    [string]$PackagePath = "",
+    [string]$NodeDir = "C:\Program Files\nodejs",
+    [string]$SkillsSource = "",
+    [switch]$SkipInstall,
+    [switch]$SkipProgrammer
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,164 +67,167 @@ function Assert-Path([string]$Path, [string]$Label) {
     }
 }
 
-function Get-SemVerParts([string]$Version) {
-    $clean = ($Version -replace '^v', '').Trim()
-    $parts = $clean.Split('.') | ForEach-Object { [int]$_ }
-    while ($parts.Count -lt 3) { $parts += 0 }
-    return ,$parts[0..2]
-}
+function Find-Packages {
+    param([string]$Hint)
 
-function Test-NodeVersionOk([string]$Version) {
-    $p = Get-SemVerParts $Version
-    # Require Node >= 22.5.0
-    if ($p[0] -gt 22) { return $true }
-    if ($p[0] -lt 22) { return $false }
-    if ($p[1] -gt 5) { return $true }
-    if ($p[1] -lt 5) { return $false }
-    return $true
-}
+    $downloads = Join-Path $env:USERPROFILE "Downloads"
+    $candidates = @()
 
-# --- Resolve defaults ---
-if (-not $ZipPath) {
-    $ZipPath = Join-Path $env:USERPROFILE "Downloads\quartusiq-and-quartus-programmer-mcp-servers.zip"
-}
-if (-not $LicenseFile) {
-    $LicenseFile = [Environment]::GetEnvironmentVariable("LM_LICENSE_FILE", "User")
-    if (-not $LicenseFile) {
-        $LicenseFile = $env:LM_LICENSE_FILE
+    if ($Hint) {
+        Assert-Path $Hint "PackagePath"
+        if ((Get-Item -LiteralPath $Hint).PSIsContainer) {
+            $candidates += Get-ChildItem -LiteralPath $Hint -Filter *.tgz -File
+        }
+        elseif ($Hint -like "*.tgz") {
+            $candidates += Get-Item -LiteralPath $Hint
+        }
+        elseif ($Hint -like "*.zip") {
+            $extract = Join-Path $env:TEMP ("quartusiq-mcp-" + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path $extract | Out-Null
+            Expand-Archive -Force -Path $Hint -DestinationPath $extract
+            $candidates += Get-ChildItem -LiteralPath $extract -Filter *.tgz -File -Recurse
+        }
+        else {
+            throw "PackagePath must be a .tgz, a .zip, or a folder: $Hint"
+        }
+        return ,$candidates
     }
-}
-if (-not $LicenseFile) {
-    throw @"
-LicenseFile is required. Pass -LicenseFile with your .dat path or server, for example:
-  .\setup-quartus-mcp.ps1 -LicenseFile "C:\altera_pro\license.dat"
-  .\setup-quartus-mcp.ps1 -LicenseFile "1800@license-server"
+
+    $zips = @(Get-ChildItem -LiteralPath $downloads -Filter "*quartusiq*mcp*.zip" -File -ErrorAction SilentlyContinue)
+    $zips += @(Get-ChildItem -LiteralPath $downloads -Filter "*quartus*mcp*.zip" -File -ErrorAction SilentlyContinue)
+    $zips = $zips | Sort-Object LastWriteTime -Descending | Select-Object -Unique -First 3
+    foreach ($z in $zips) {
+        $extract = Join-Path $env:TEMP ("quartusiq-mcp-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -Force -Path $z.FullName -DestinationPath $extract
+        $candidates += Get-ChildItem -LiteralPath $extract -Filter *.tgz -File -Recurse
+    }
+
+    $candidates += Get-ChildItem -LiteralPath $downloads -Filter "altera-quartus*.tgz" -File -ErrorAction SilentlyContinue
+    $candidates += Get-ChildItem -LiteralPath $downloads -Filter "*quartus*mcp*.tgz" -File -ErrorAction SilentlyContinue
+
+    $candidates = @($candidates | Sort-Object FullName -Unique)
+    if ($candidates.Count -eq 0) {
+        throw @"
+No QuartusIQ MCP .tgz found.
+1. Sign in at https://www.altera.com/products/software-tools/quartusiq
+2. Download QuartusIQ MCP Server (+ Programmer MCP) into Downloads
+3. Re-run this script, or pass -PackagePath to the .tgz / zip
 "@
+    }
+    return ,$candidates
 }
 
-$quartusSh = Join-Path $QuartusRoot "bin64\quartus_sh.exe"
-$npmGlobalRoot = Join-Path $env:APPDATA "npm\node_modules"
-$quartusMcpEntry = Join-Path $npmGlobalRoot "@altera\quartus-mcp\dist\index.mjs"
-$programmerMcpEntry = Join-Path $npmGlobalRoot "@altera\quartus-programmer-mcp\dist\index.mjs"
+$nodeExe = Join-Path $NodeDir "node.exe"
+$npxCmd = Join-Path $NodeDir "npx.cmd"
+$npmCmd = Join-Path $NodeDir "npm.cmd"
 $cursorDir = Join-Path $env:USERPROFILE ".cursor"
 $mcpJsonPath = Join-Path $cursorDir "mcp.json"
-$extractDir = Join-Path $env:USERPROFILE "Downloads\quartusiq-mcp"
+$skillsDest = Join-Path $cursorDir "skills"
+$quartusSh = Join-Path $QuartusRoot "bin64\quartus_sh.exe"
 
-Write-Host "Quartus → Cursor MCP setup" -ForegroundColor Green
-Write-Host "  User          : $env:USERNAME"
-Write-Host "  QuartusRoot   : $QuartusRoot"
-Write-Host "  License       : $LicenseFile"
-Write-Host "  Node          : $NodeExe"
-Write-Host "  mcp.json      : $mcpJsonPath"
+Write-Host "QuartusIQ MCP → Cursor (Windows)" -ForegroundColor Green
+Write-Host "  Guide: docs.altera.com .../b.-cursor-quartusiq-mcp-skills-windows"
+Write-Host "  User : $env:USERNAME"
 
-# --- 1. Verify Node ---
-Write-Step "Checking Node.js (>= 22.5)"
-Assert-Path $NodeExe "Node.js"
-$nodeVer = & $NodeExe -v
-if (-not (Test-NodeVersionOk $nodeVer)) {
-    throw "Node $nodeVer is too old. Install Node.js 22.5+ from https://nodejs.org and open a new PowerShell."
-}
-Write-Host "  node $nodeVer OK"
-$npmCmd = Join-Path (Split-Path $NodeExe -Parent) "npm.cmd"
+# --- Node ---
+Write-Step "Checking Node.js / npm"
+Assert-Path $nodeExe "Node.js"
 Assert-Path $npmCmd "npm"
-Write-Host "  npm $(& $npmCmd -v) OK"
+Assert-Path $npxCmd "npx"
+$nodeVer = & $nodeExe -v
+$npmVer = & $npmCmd -v
+Write-Host "  node $nodeVer"
+Write-Host "  npm  $npmVer"
 
-# --- 2. Verify Quartus ---
-Write-Step "Checking Quartus Pro at $QuartusRoot"
-Assert-Path $quartusSh "quartus_sh.exe"
-$qOut = & $quartusSh --version 2>&1 | Out-String
-Write-Host $qOut.Trim()
-if ($qOut -notmatch "(?i)Pro") {
-    Write-Warning "Output does not clearly say Pro Edition. Continue only if this is Quartus Prime Pro 26.1+."
+# --- Quartus (recommended for project tools) ---
+Write-Step "Checking Quartus at $QuartusRoot"
+if (Test-Path -LiteralPath $quartusSh) {
+    $qOut = & $quartusSh --version 2>&1 | Out-String
+    Write-Host ($qOut.Trim())
+    [Environment]::SetEnvironmentVariable("QUARTUS_ROOTDIR", $QuartusRoot, "User")
+    $env:QUARTUS_ROOTDIR = $QuartusRoot
+    Write-Host "  QUARTUS_ROOTDIR=$QuartusRoot"
+}
+else {
+    Write-Warning "quartus_sh.exe not found at $quartusSh. MCP can still register; project tools need Quartus Prime Pro 26.3."
 }
 
-# --- 3. Env: QUARTUS_ROOTDIR + LM_LICENSE_FILE ---
-Write-Step "Setting User environment variables"
-[Environment]::SetEnvironmentVariable("QUARTUS_ROOTDIR", $QuartusRoot, "User")
-[Environment]::SetEnvironmentVariable("LM_LICENSE_FILE", $LicenseFile, "User")
-$env:QUARTUS_ROOTDIR = $QuartusRoot
-$env:LM_LICENSE_FILE = $LicenseFile
-Write-Host "  QUARTUS_ROOTDIR=$QuartusRoot"
-Write-Host "  LM_LICENSE_FILE=$LicenseFile"
+if ($LicenseFile) {
+    [Environment]::SetEnvironmentVariable("LM_LICENSE_FILE", $LicenseFile, "User")
+    $env:LM_LICENSE_FILE = $LicenseFile
+    Write-Host "  LM_LICENSE_FILE=$LicenseFile"
+}
 
-# --- 4. Install MCP packages from zip ---
+# --- npm install -g ---
 if (-not $SkipInstall) {
-    Write-Step "Installing QuartusIQ MCP servers from zip"
-    Assert-Path $ZipPath "MCP servers zip (download from altera.com QuartusIQ page → Download)"
-    if (Test-Path -LiteralPath $extractDir) {
-        Remove-Item -LiteralPath $extractDir -Recurse -Force
-    }
-    New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-    Expand-Archive -Force -Path $ZipPath -DestinationPath $extractDir
-    Push-Location $extractDir
-    try {
-        $tgz = @(Get-ChildItem -Filter *.tgz)
-        if ($tgz.Count -eq 0) {
-            throw "No .tgz packages found inside $extractDir after extracting $ZipPath"
-        }
-        Write-Host "  Installing: $($tgz.Name -join ', ')"
-        & $npmCmd install -g ($tgz.FullName)
-        if ($LASTEXITCODE -ne 0) { throw "npm install -g failed with exit code $LASTEXITCODE" }
-    }
-    finally {
-        Pop-Location
-    }
+    Write-Step "Installing MCP package(s) globally"
+    $pkgs = Find-Packages -Hint $PackagePath
+    Write-Host "  Found:"
+    $pkgs | ForEach-Object { Write-Host "    $($_.FullName)" }
+    & $npmCmd install -g ($pkgs.FullName)
+    if ($LASTEXITCODE -ne 0) { throw "npm install -g failed ($LASTEXITCODE)" }
     & $npmCmd list -g --depth=0
-} else {
+}
+else {
     Write-Step "Skipping npm install (-SkipInstall)"
 }
 
-Assert-Path $quartusMcpEntry "quartus-mcp entry"
-Assert-Path $programmerMcpEntry "quartus-programmer-mcp entry"
-
-# --- 5. Write mcp.json ---
+# --- mcp.json (official npx pattern) ---
 Write-Step "Writing $mcpJsonPath"
 New-Item -ItemType Directory -Force -Path $cursorDir | Out-Null
 
-# Escape backslashes for JSON
-function To-JsonPath([string]$Path) {
-    return ($Path -replace '\\', '\\')
-}
-
-$mcp = [ordered]@{
-    mcpServers = [ordered]@{
-        "quartus-mcp" = [ordered]@{
-            type    = "stdio"
-            command = $NodeExe
-            args    = @($quartusMcpEntry)
-            env     = [ordered]@{
-                LM_LICENSE_FILE = $LicenseFile
-            }
-        }
-        "programmer-mcp" = [ordered]@{
-            type    = "stdio"
-            command = $NodeExe
-            args    = @($programmerMcpEntry)
-            env     = [ordered]@{
-                LM_LICENSE_FILE = $LicenseFile
-            }
-        }
+$servers = [ordered]@{
+    "quartus-mcp" = [ordered]@{
+        type    = "stdio"
+        command = (Join-Path $NodeDir "npx")
+        args    = @("-y", "quartus-mcp")
+        env     = @{}
     }
 }
 
-# Prefer ConvertTo-Json for correct escaping; depth covers nested objects
-$json = $mcp | ConvertTo-Json -Depth 6
-# Preserve existing file as backup if present
+if (-not $SkipProgrammer) {
+    $servers["programmer-mcp"] = [ordered]@{
+        type    = "stdio"
+        command = (Join-Path $NodeDir "npx")
+        args    = @("-y", "quartus-programmer-mcp")
+        env     = @{}
+    }
+}
+
+if ($LicenseFile) {
+    foreach ($name in @($servers.Keys)) {
+        $servers[$name].env = [ordered]@{ LM_LICENSE_FILE = $LicenseFile }
+    }
+}
+
+$mcp = [ordered]@{ mcpServers = $servers }
+
 if (Test-Path -LiteralPath $mcpJsonPath) {
     $backup = "$mcpJsonPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     Copy-Item -LiteralPath $mcpJsonPath -Destination $backup
     Write-Host "  Backed up existing mcp.json → $backup"
 }
-Set-Content -LiteralPath $mcpJsonPath -Value $json -Encoding UTF8
-Write-Host "  Wrote mcp.json"
+
+($mcp | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $mcpJsonPath -Encoding UTF8
+Write-Host "  Wrote mcp.json (npx -y quartus-mcp)"
+
+# --- Skills (optional) ---
+if ($SkillsSource) {
+    Write-Step "Copying skills to $skillsDest"
+    Assert-Path $SkillsSource "SkillsSource"
+    New-Item -ItemType Directory -Force -Path $skillsDest | Out-Null
+    Copy-Item -Path (Join-Path $SkillsSource "*") -Destination $skillsDest -Recurse -Force
+    Write-Host "  Skills copied."
+}
 
 Write-Host ""
-Write-Host "Done. Next steps:" -ForegroundColor Green
-Write-Host "  1. Quit Cursor completely (all windows)."
-Write-Host "  2. Reopen Cursor on any folder on this PC."
-Write-Host "  3. Confirm MCP shows user-quartus-mcp and user-programmer-mcp."
-Write-Host "  4. Ask Cursor: validate the Quartus installation."
+Write-Host "Done. Next:" -ForegroundColor Green
+Write-Host "  1. Fully quit Cursor (all windows), then reopen."
+Write-Host "  2. In a local chat, ask: list MCP servers"
+Write-Host "     Expect: user-quartus-mcp ready (and user-programmer-mcp if installed)."
+Write-Host "  3. Ask: validate the Quartus installation"
+Write-Host "     (uses validate_installation from QuartusIQ MCP)"
 Write-Host ""
-Write-Host "If servers are missing, check paths in $mcpJsonPath and fully quit Cursor."
-Write-Host "If license fails, fix -LicenseFile (.dat path or 1800@server) and re-run, then restart Cursor."
-Write-Host "Optional QuartusIQ chat inside Quartus 26.3 (View > QuartusIQ) is separate — skip for Cursor."
+Write-Host "Download packages: https://www.altera.com/products/software-tools/quartusiq"
+Write-Host "Guide: https://docs.altera.com/r/docs/m530666/current/altera-quartusiq-expert-companion-user-guide/b.-cursor-quartusiq-mcp-skills-windows"

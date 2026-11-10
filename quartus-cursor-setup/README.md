@@ -1,28 +1,22 @@
-# Link Quartus Prime Pro 26.3 → Cursor (Windows)
+# Cursor + QuartusIQ MCP (Windows)
 
-This folder automates the Altera **Cursor-QuartusIQ Windows Setup** so Cursor can talk to your local Quartus install through the QuartusIQ MCP servers.
+Follows Altera’s current guide:
 
-> **Must run on the Windows PC where Quartus is installed.** A Cursor Cloud Agent cannot reach `C:\altera_pro\26.3`.
+- [Installation](https://docs.altera.com/r/docs/m530666/current/altera-quartusiq-expert-companion-user-guide/installation)
+- [B. Cursor + QuartusIQ MCP + skills (Windows)](https://docs.altera.com/r/docs/m530666/current/altera-quartusiq-expert-companion-user-guide/b.-cursor-quartusiq-mcp-skills-windows)
+- [How to get packages](https://docs.altera.com/r/docs/m530666/current/altera-quartusiq-expert-companion-user-guide/how-to-get-quartusiq-packages)
 
-## You need
+> Run this on the **Windows PC** where Quartus and Cursor Desktop are installed. A Cloud Agent cannot finish this link.
 
-| Requirement | Notes |
-|---|---|
-| Quartus Prime Pro **26.1 / 26.1.1 / 26.3** | Default path: `C:\altera_pro\26.3\quartus` |
-| Node.js **22.5+** | https://nodejs.org — open a **new** PowerShell after install |
-| Altera.com login | Download the MCP zip from the QuartusIQ page |
-| License | `.dat` file **or** server like `1800@server` |
+## Prerequisites
 
-Official download: https://www.altera.com/products/software-tools/quartusiq  
-Guide: https://docs.altera.com/r/docs/m530666/current
+1. **Cursor** Desktop installed  
+2. **Node.js** from https://nodejs.org (needed for `npm` / `npx`)  
+3. **Quartus Prime Pro 26.3** recommended if you will create/compile projects (`C:\altera_pro\26.3\quartus`)  
+4. Altera.com login → download **QuartusIQ MCP Server** (+ Programmer MCP) from https://www.altera.com/products/software-tools/quartusiq  
+5. Optional: **QuartusIQ Skills** zip from the same page  
 
-## Quick setup (recommended)
-
-1. Sign in at the QuartusIQ page → **Download** → save  
-   `quartusiq-and-quartus-programmer-mcp-servers.zip` into your **Downloads** folder.  
-   Skip the VS Code and Skills downloads.
-
-2. Open **Windows PowerShell** and run (edit the license path):
+## One-command setup
 
 ```powershell
 cd path\to\Cursor_Rushi\quartus-cursor-setup
@@ -30,45 +24,70 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\setup-quartus-mcp.ps1 -LicenseFile "C:\altera_pro\your-license.dat"
 ```
 
-Server license example:
-
-```powershell
-.\setup-quartus-mcp.ps1 -LicenseFile "1800@your-license-server"
-```
-
-Custom Quartus folder:
+Or with an explicit package:
 
 ```powershell
 .\setup-quartus-mcp.ps1 `
-  -QuartusRoot "D:\altera_pro\26.3\quartus" `
-  -LicenseFile "C:\altera_pro\license.dat"
+  -PackagePath "$env:USERPROFILE\Downloads\altera-quartus-mcp-0.6.0.tgz" `
+  -LicenseFile "1800@your-license-server"
 ```
 
-3. **Quit Cursor completely**, reopen it, and confirm MCP shows:
-   - `user-quartus-mcp`
-   - `user-programmer-mcp`
+Optional skills:
 
-4. Ask Cursor: **validate the Quartus installation.**  
-   A good answer shows your version, license, and no license error.
+```powershell
+.\setup-quartus-mcp.ps1 `
+  -LicenseFile "C:\altera_pro\license.dat" `
+  -SkillsSource "$env:USERPROFILE\Downloads\quartusiq-skills"
+```
 
-## What the script does
+## Manual steps (same as the Altera guide)
 
-1. Checks `node -v` (≥ 22.5) and `quartus_sh.exe --version` (Pro)
-2. Sets User env vars: `QUARTUS_ROOTDIR`, `LM_LICENSE_FILE`
-3. Expands the zip and runs `npm install -g` on the `.tgz` packages
-4. Writes `%USERPROFILE%\.cursor\mcp.json` (backs up any existing file)
+```powershell
+node -v
+npm -v
 
-Manual template (if you prefer Notepad): see [`mcp.json.example`](mcp.json.example). Replace `YOUR_WINDOWS_NAME` (`echo $env:USERNAME`) and the license path (use `\\` in JSON).
+cd $env:USERPROFILE\Downloads
+npm install -g .\altera-quartus-mcp-0.6.0.tgz
+# version in the filename may differ; install every .tgz from the zip
+```
+
+Write `%USERPROFILE%\.cursor\mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "quartus-mcp": {
+      "type": "stdio",
+      "command": "C:\\Program Files\\nodejs\\npx",
+      "args": ["-y", "quartus-mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+See [`mcp.json.example`](mcp.json.example) for quartus + programmer together.
+
+Then:
+
+1. Fully quit and reopen Cursor  
+2. Ask: **list MCP servers** → expect `user-quartus-mcp` ready  
+3. Ask: **validate the Quartus installation** → uses `validate_installation`  
+4. Copy skill folders to `%USERPROFILE%\.cursor\skills\`
+
+## Confirm it worked
+
+| Check | Expected |
+|---|---|
+| MCP list | `user-quartus-mcp` ready (optional: `user-programmer-mcp`) |
+| Validate | Quartus Pro **26.3**, license OK, no license error |
+| Tools | e.g. `validate_installation`, `list_quartus_tools`, `create_project` |
 
 ## Troubleshooting
 
-| Symptom | Fix |
+| Issue | Fix |
 |---|---|
-| MCP servers missing in Cursor | Check username/paths in `mcp.json`; fully quit Cursor |
-| License error | Fix `.dat` path or use `1800@server`; re-run script; restart Cursor |
-| Zip / install fails | Zip must be in Downloads (or pass `-ZipPath`) before install |
-| Wrong Quartus path | Pass `-QuartusRoot` to the folder that contains `bin64\quartus_sh.exe` |
-
-## Optional: QuartusIQ chat inside Quartus 26.3
-
-**Skip for Cursor.** `View > QuartusIQ` is only inside Quartus 26.3+. An empty panel does not mean Cursor failed. A Cursor API key does not work there — configure a provider key (OpenAI / Gemini / Claude) in Quartus settings if you want that panel.
+| MCP missing after restart | Confirm `mcp.json` uses `npx` + `quartus-mcp`; fully quit Cursor |
+| `npx` / package not found | Re-run `npm install -g` on the downloaded `.tgz` |
+| Validate fails / no Quartus | Set `QUARTUS_ROOTDIR` to `C:\altera_pro\26.3\quartus` (script does this) |
+| License error | Set `LM_LICENSE_FILE` to your `.dat` or `1800@server`, restart Cursor |
