@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "quartus-mcp": {
+      "type": "stdio",
+      "command": "C:\\Program Files\\nodejs\\npx",
+      "args": ["-y", "quartus-mcp"],
+      "env": {}
+    },
+    "programmer-mcp": {
+      "type": "stdio",
+      "command": "C:\\Program Files\\nodejs\\npx",
+      "args": ["-y", "quartus-programmer-mcp"],
+      "env": {}
+    }
+  }
+}
